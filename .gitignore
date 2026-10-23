@@ -51,3 +51,6 @@ dsh-pet/dist-app/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# opencode 配置
+.opencode/

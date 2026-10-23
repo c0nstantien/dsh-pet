@@ -1,0 +1,9 @@
+{
+  "name": "dsh-pet-opencode-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@opencode/plugin": "^2.1.3"
+  }
+}
