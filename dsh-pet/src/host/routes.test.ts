@@ -1,10 +1,9 @@
 /**
  * 路由级回归测试：`/dsh-pet-7340/thumb/<petId>/<file>` 的路径安全与素材归属。
  *
- * 为什么单独有这一层：`petId` 是该路由里唯一**直接进文件路径**的用户输入，而 2026-08-28 的 pet pack
- * 重构把它引入时没套用 resolveAsset——Windows 上 `%5C` 解出的反斜杠不会被 `rest.split('/')` 切开，
- * 于是 `..\..\` 能越出用户根读盘；它挂了 2.5 周才被外部贡献者发现（PR #53）。本文件把这条不变式钉在
- * **handler 这一层**（而不是只测纯函数），防的就是"以后又有人新写一段手拼路径"。
+ * 为什么单独有这一层：`petId` 是该路由里唯一直接进文件路径的用户输入，必须套用 resolveAsset——
+ * Windows 上 `%5C` 解出的反斜杠不会被 `rest.split('/')` 切开，否则 `..\..\` 能越出用户根读盘。
+ * 本文件把这条不变式钉在 handler 这一层（而不是只测纯函数），防的就是"以后又有人新写一段手拼路径"。
  *
  * 直接 import 源码（`./index.ts`）而不是 `lib/` 构建产物：测试不依赖 `npm run build`（lib/ 不入库）。
  * 代价：源码形态下模块内的 PACKAGE_ROOT 解析为 `<pkg>/src`，包内 assets 不可达，故本文件只覆盖 thumb
@@ -94,7 +93,7 @@ before(() => {
   let handler: ((req: unknown, res: unknown) => Promise<void>) | undefined;
   const noop = (): void => {};
   apply({
-    // 与 DSH 一致：effect 的返回值是**释放函数**。这里收下来在 after() 里调用——
+    // 与 DSH 一致：effect 的返回值是释放函数。这里收下来在 after() 里调用——
     // 插件现在有常驻定时器（余额周期刷新），不释放的话测试进程会一直等它（跑完不退出）。
     effect: (fn: () => unknown) => {
       try {
@@ -143,6 +142,8 @@ before(() => {
         {
           method,
           url,
+          // 真实 IncomingMessage 恒有 headers；sendFile 用它读 Range
+          headers: {},
           on: (event: string, cb: (chunk?: Buffer) => void) => {
             if (event === 'data' && body !== undefined) queueMicrotask(() => cb(Buffer.from(body, 'utf8')));
             if (event === 'end') queueMicrotask(() => cb());
@@ -216,19 +217,28 @@ describe('/state + /balance —— 轮询统一状态与余额动作端点', () 
     assert.equal((await call('/dsh-pet-7340/state', 'POST')).status, 405);
   });
 
-  test('只传 since / 只传 timeout → 400（成对必填，与 /playback 的 wait/timeout 同一套约定）', async () => {
-    assert.equal((await call('/dsh-pet-7340/state?since=0')).status, 400);
-    assert.equal((await call('/dsh-pet-7340/state?timeout=1000')).status, 400);
+  test('只传 since / 只传 timeout → 200 + bad-request（成对必填，与 /playback 的 wait/timeout 同一套约定）', async () => {
+    for (const q of ['since=0', 'timeout=1000']) {
+      const r = await call('/dsh-pet-7340/state?' + q);
+      assert.equal(r.status, 200, q);
+      const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+      assert.equal(body.ok, false);
+      assert.equal(body.reason, 'bad-request');
+    }
   });
 
-  test('非法 since / timeout → 400（非整数、负数、小数、超上限）', async () => {
+  test('非法 since / timeout → 200 + bad-request（非整数、负数、小数、超上限）', async () => {
     for (const q of [
       'since=abc&timeout=1000',
       'since=-1&timeout=1000',
       'since=0&timeout=99999',
       'since=0&timeout=1.5',
     ]) {
-      assert.equal((await call('/dsh-pet-7340/state?' + q)).status, 400, q);
+      const r = await call('/dsh-pet-7340/state?' + q);
+      assert.equal(r.status, 200, q);
+      const body = JSON.parse(r.body) as { ok: boolean; reason: string };
+      assert.equal(body.ok, false, q);
+      assert.equal(body.reason, 'bad-request', q);
     }
   });
 
@@ -286,10 +296,9 @@ describe('/state + /balance —— 轮询统一状态与余额动作端点', () 
 });
 
 describe('轮询统一后删掉的旧端点 —— 不得复活', () => {
-  // 这些端点改造前各有独立的客户端轮询循环；全部并入 GET /state 后删除。
+  // 这些端点已全部并入 GET /state，不再有独立的客户端轮询循环，旧端点不得复活。
   // 保留这条守卫是为了防止"顺手又加回一个 /xxx 轮询端点"（那正是这次要消灭的东西）。
-  // 注意 /broadcast 不在此列：它以**新的语义**回来了（POST 写入端点，见下方专门的分组），
-  // 这里的守卫只要求它不再是一个 GET 读端点。
+  // 注意 /broadcast 不在此列：它是 POST 写入端点（见下方专门的分组），这里的守卫只要求它不再是一个 GET 读端点。
   for (const path of ['/dsh-pet-7340/notify']) {
     test(`${path} 已删除（GET 不再是端点）`, async () => {
       const r = await call(path);
@@ -353,7 +362,7 @@ describe('/broadcast —— 第三方投喂（POST 写入端点，issue #76）',
 
   test('非法 duration → bad-request，且**在读配置之前**就短路（不是 generate-error）', async () => {
     // 与本文件里"配置不可达"这一前提配合：若 duration 校验被放到读配置之后，
-    // 这几条会变成 generate-error——断言 reason 就同时钉住了**短路顺序**。
+    // 这几条会变成 generate-error——断言 reason 就同时钉住了短路顺序。
     for (const duration of [-1, -0.5, '3000', {}, [], true]) {
       const r = await call('/dsh-pet-7340/broadcast?pet=main', 'POST', JSON.stringify({ text: '该喝水了', duration }));
       assert.equal(r.status, 200, `duration=${JSON.stringify(duration)}`);
@@ -482,11 +491,12 @@ describe('thumb 路由 —— petId 不得当路径片段（PR #53 的不变式�
     assert.equal(r.body.includes(SECRET), false, '越根内容不得出现在响应体里');
   });
 
-  test('%2F 正斜杠被切成多段：穿越落在 fileName 段，由 resolveAsset 拦下 → 404', async () => {
-    // 注意与 %5C 的区别：正斜杠参与 split('/')，petId 只剩 '..'（点号属合法标识符字符，不进 400 分支），
-    // 穿越意图体现在 fileName = '../../outside/leak.webm' 上——那道防线是 resolveExisting 的根内校验。
+  test('%2F 正斜杠被切成多段：petId 只剩「..」，标识符规则当场拒 → 400', async () => {
+    // 注意与 %5C 的区别：正斜杠参与 split('/')，petId 只剩 '..'。点号本身是合法标识符字符，
+    // 但 '.' 与 '..' 作为目录名会把素材根顶到上一层，所以 isValidPetId 单独拦掉——早于第二层
+    // resolveExisting 的根内校验（名称段的穿越仍由那层兜住，见下一条用例）。
     const r = await call('/dsh-pet-7340/thumb/..%2F..%2F..%2Foutside/leak.webm');
-    assert.equal(r.status, 404);
+    assert.equal(r.status, 400);
     assert.equal(r.body.includes(SECRET), false);
   });
 
@@ -549,6 +559,16 @@ describe('pic/memes 路由 —— 表情包素材归属（与 thumb 同一套语
   });
 });
 
+describe('/logo —— 插件 logo（对话面板的宠物头像）', () => {
+  test('只接受裸路径：多一段就 400，不把 assets 根开放成静态目录', async () => {
+    assert.equal((await call('/dsh-pet-7340/logo/x.png')).status, 400);
+  });
+
+  test('源码形态下包内 assets 不可达 → 404（真实安装里读 assets/logo.png）', async () => {
+    assert.equal((await call('/dsh-pet-7340/logo')).status, 404);
+  });
+});
+
 describe('pic/memes 路由 —— 素材根不得当路径片段（与 thumb 同一条不变式）', () => {
   test('%5C 反斜杠穿越（Windows）→ 400，且绝不读到用户根之外', async () => {
     const r = await call('/dsh-pet-7340/pic/memes/..%5C..%5C..%5Coutside-memes/leak.png');
@@ -563,9 +583,11 @@ describe('pic/memes 路由 —— 素材根不得当路径片段（与 thumb 同
     }
   });
 
-  test('%2F 正斜杠被切成多段：穿越落在名称段，由 resolveAsset 拦下 → 404', async () => {
+  test('%2F 正斜杠被切成多段：素材根只剩「..」，标识符规则当场拒 → 400', async () => {
+    // 与 thumb 同一条规则：素材根是目录名，'.'/'..' 会被 isValidPetId 拦在这里。
+    // 名称段的穿越仍由 resolveExisting 兜住（见下一条）。
     const r = await call('/dsh-pet-7340/pic/memes/..%2F..%2F..%2Foutside-memes/leak.png');
-    assert.equal(r.status, 404);
+    assert.equal(r.status, 400);
     assert.equal(r.body.includes(SECRET), false);
   });
 
@@ -583,8 +605,8 @@ describe('pic/memes 路由 —— 素材根不得当路径片段（与 thumb 同
 });
 
 describe('pet 必填 —— 缺省一律 pet-required（issue #122 第 1 条：绝不退到列表第一只）', () => {
-  // 与 /broadcast 的 duration 同一处境：pet 空串**不必读配置**就能拒，所以这一组在"配置不可达"
-  // 的源码形态下照样能测——断言 reason 同时钉住了**短路顺序**（是 pet-required，不是 generate-error）。
+  // 与 /broadcast 的 duration 同一处境：pet 空串不必读配置就能拒，所以这一组在"配置不可达"
+  // 的源码形态下照样能测——断言 reason 同时钉住了短路顺序（是 pet-required，不是 generate-error）。
   // 决策层那 5 条（/anim、/broadcast、/bubble/clear、/position、/throw）的同一分支由各自的
   // *.test.ts 覆盖：它们的 pet 解析住在决策模块里，路由层拿不到"没读配置"的时机。
 
@@ -619,13 +641,14 @@ describe('pet 必填 —— 缺省一律 pet-required（issue #122 第 1 条：�
 
   test('/chat：方法不对仍是 405（pet 校验不抢在协议层错误前面）', async () => {
     assert.equal((await call('/dsh-pet-7340/chat', 'PUT')).status, 405);
-    assert.equal((await call('/dsh-pet-7340/chat', 'DELETE')).status, 405);
+    // DELETE 自删除记忆接口起是合法方法（见 chat-delete.test.ts），这里改用同样不被接受的 PATCH
+    assert.equal((await call('/dsh-pet-7340/chat', 'PATCH')).status, 405);
   });
 });
 
 describe('surface 必填 —— 缺省/非法一律 bad-request，且短路在读盘之前（issue #122 第 1 条）', () => {
-  // 与 pet 空串同一处境：surface 的**参数级**校验放在读配置之前，所以这一组在"配置不可达"的
-  // 源码形态下照样能测——断言 reason 同时钉住了**短路顺序**（是 bad-request，不是 generate-error）。
+  // 与 pet 空串同一处境：surface 的参数级校验放在读配置之前，所以这一组在"配置不可达"的
+  // 源码形态下照样能测——断言 reason 同时钉住了短路顺序（是 bad-request，不是 generate-error）。
   test('/lock、/whisper、/chat POST：不给 surface / 非法值 → bad-request', async () => {
     const cases: Array<[string, string, string | undefined]> = [
       ['lock', 'POST', '{}'],
@@ -645,7 +668,7 @@ describe('surface 必填 —— 缺省/非法一律 bad-request，且短路在�
 
   test('/chat GET 与 /lock/release 不校验 surface：照旧走到读配置那一步（generate-error）', async () => {
     // 释放必须永远能成功（否则宠物中途被隐藏就撤不掉锁）；GET 是读记忆，与显示在哪一端无关。
-    // 两者都**忽略** surface——连非法值也不该报 bad-request。
+    // 两者都忽略 surface——连非法值也不该报 bad-request。
     const g = await call('/dsh-pet-7340/chat?pet=main&surface=nope');
     assert.equal(g.status, 200);
     assert.equal((JSON.parse(g.body) as { reason: string }).reason, 'generate-error');
@@ -657,7 +680,7 @@ describe('surface 必填 —— 缺省/非法一律 bad-request，且短路在�
 
 describe('/pose —— 桌面端实况（GET 查询 / POST 上报），与 surface 无关', () => {
   // 与 /whisper、/chat 的"pet 必填"同一处境：这些断言在"配置不可达"的源码形态下照样成立，
-  // 正好钉住**短路顺序**（pet 先报，surface 根本不参与）。
+  // 正好钉住短路顺序（pet 先报，surface 根本不参与）。
   test('/pose：不给 pet → pet-required；方法不对 → 405', async () => {
     const r = await call('/dsh-pet-7340/pose');
     assert.equal(r.status, 200);
@@ -671,7 +694,7 @@ describe('/pose —— 桌面端实况（GET 查询 / POST 上报），与 surfa
   });
 
   test('两条都**不校验** surface：连非法值也照旧走到读配置那一步', async () => {
-    // 它们是**读 / 内部**端点（同 GET /chat、GET /playback）——surface 只加在会产生渲染端可见效果
+    // 它们是读 / 内部端点（同 GET /chat、GET /playback）——surface 只加在会产生渲染端可见效果
     // 的动作端点上。这条同时钉住"以后别顺手把 surface 加进来"。
     const g = await call('/dsh-pet-7340/pose?pet=main&surface=nope');
     assert.equal(g.status, 200);
@@ -705,15 +728,17 @@ describe('?rounds= —— 非法值 bad-request，合法值不误杀（issue #14
   });
 });
 
-describe('/pet-display —— 业务失败一律 200 + ok:false（不用 400/404 表达业务结论）', () => {
-  test('GET → 405（写端点；方法错是协议层错误，照旧不是 200）', async () => {
-    assert.equal((await call('/dsh-pet-7340/pet-display')).status, 405);
+describe('/pet-display —— 业务失败 200 + 实体，协议失败用真实状态码', () => {
+  test('GET → 405 + method-not-allowed（方法错是协议失败，不由 handler 决定）', async () => {
+    const r = await call('/dsh-pet-7340/pet-display');
+    assert.equal(r.status, 405);
+    assert.equal((JSON.parse(r.body) as { reason: string }).reason, 'method-not-allowed');
   });
 
-  test('请求体不是合法 JSON → 400（协议层错误，与其它端点同一口径）', async () => {
+  test('请求体不是合法 JSON → 400 + invalid-json（协议失败）', async () => {
     const r = await call('/dsh-pet-7340/pet-display', 'POST', '{ 不是 json');
     assert.equal(r.status, 400);
-    assert.match(r.body, /invalid JSON body/);
+    assert.equal((JSON.parse(r.body) as { reason: string }).reason, 'invalid-json');
   });
 
   test('缺 id → 200 + pet-required（与 9 条 ?pet= 路由同一对词汇）', async () => {
@@ -771,16 +796,22 @@ describe('/work-status —— 外部写入工作状态', () => {
     assert.equal(again.status, 204);
   });
 
-  test('非法输入 → 400；GET → 405；body 超限 → 413', async () => {
-    const bad = [
-      '{',
-      JSON.stringify({ state: 'nope' }),
-      JSON.stringify({ state: 'working', task: 42 }),
-      JSON.stringify({ state: 'working', task: 'x'.repeat(41) }),
-    ];
-    for (const body of bad) {
+  test('坏 JSON → 400；业务参数非法 → 200 + bad-request；GET → 405；body 超限 → 413', async () => {
+    const malformed = await call('/dsh-pet-7340/work-status', 'POST', '{');
+    assert.equal(malformed.status, 400, '坏 JSON 是协议失败');
+    assert.equal((JSON.parse(malformed.body) as { reason: string }).reason, 'invalid-json');
+
+    for (const payload of [
+      { state: 'nope' },
+      { state: 'working', task: 42 },
+      { state: 'working', task: 'x'.repeat(41) },
+    ]) {
+      const body = JSON.stringify(payload);
       const r = await call('/dsh-pet-7340/work-status', 'POST', body);
-      assert.equal(r.status, 400, body.slice(0, 60));
+      assert.equal(r.status, 200, body.slice(0, 60));
+      const parsed = JSON.parse(r.body) as { ok: boolean; reason: string };
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.reason, 'bad-request');
     }
     assert.equal((await call('/dsh-pet-7340/work-status')).status, 405);
     const big = await call(
@@ -821,5 +852,39 @@ describe('对外 Cordis 服务 —— 第三方注册余额查询', () => {
       dispose();
     }
     assert.equal(api().list().external.includes('route-test-plugin'), false);
+  });
+});
+
+describe('/todos —— 待办清单的完整往返', () => {
+  test('新建 → 列表 → 勾选 → 删除', async () => {
+    const create = await call('/dsh-pet-7340/todos', 'POST', JSON.stringify({ text: '交周报', dueAt: 1793000000000 }));
+    assert.equal(create.status, 200);
+    const created = JSON.parse(create.body) as { ok: boolean; todo: { id: string; text: string; dueAt: number } };
+    assert.equal(created.ok, true);
+    assert.equal(created.todo.text, '交周报');
+    assert.equal(created.todo.dueAt, 1793000000000);
+
+    const listed = JSON.parse((await call('/dsh-pet-7340/todos')).body) as { todos: Array<{ id: string }> };
+    assert.ok(
+      listed.todos.some((todo) => todo.id === created.todo.id),
+      '新建的待办必须出现在清单里',
+    );
+
+    const patched = JSON.parse(
+      (await call('/dsh-pet-7340/todos/' + created.todo.id, 'PATCH', JSON.stringify({ done: true }))).body,
+    ) as { ok: boolean; todo: { done: boolean } };
+    assert.equal(patched.ok, true);
+    assert.equal(patched.todo.done, true);
+
+    const removed = JSON.parse((await call('/dsh-pet-7340/todos/' + created.todo.id, 'DELETE')).body) as {
+      removed: number;
+    };
+    assert.equal(removed.removed, 1);
+    const after = JSON.parse((await call('/dsh-pet-7340/todos')).body) as { todos: Array<{ id: string }> };
+    assert.equal(
+      after.todos.some((todo) => todo.id === created.todo.id),
+      false,
+      '删除后不得再出现在清单里',
+    );
   });
 });

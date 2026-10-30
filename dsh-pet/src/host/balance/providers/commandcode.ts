@@ -1,27 +1,23 @@
 /**
- * Command Code（provider id `commandcode`）—— 三窗口用量，走**控制面** `/alpha/*`。
+ * Command Code（provider id commandcode）：三窗口用量，走未文档化的控制面 /alpha/*。
  *
- * 用量在官方 CLI 使用的未文档化控制面上，与推理数据面的 `/provider`、`/provider/v1` 不是同一条
- * 路径：先 whoami 取 orgId，再依次取额度 / 订阅 / 当期消耗（**串行 4 次调用**）。
+ * 用量在官方 CLI 使用的控制面上，与推理数据面不同：先 whoami 取 orgId，再串行取额度、
+ * 订阅与当期消耗。订阅接口可选，失败只缺重置时间，不因此整体失败。
+ * summary 同时给出本期 token 与请求数，作为 windows 形态的第三页；给不全就整页不出。
+ * 展示形态同 opencode（windows）；不负责展示层选择最紧迫窗口。
  *
- * 数据来源与口径（与官方 CLI 的 `/alpha` 路由一致）：
- * - `credits`：`monthlyCredits` + `purchasedCredits` + `freeCredits` = 剩余额度；
- * - `windowLimits`：`limited` 为真才有 5h（`fiveHour`）/ 周窗口，各 `{used, cap, resetAt}`；
- * - `usage/summary` 的 `totalCost` = 当期已消耗 → 月度百分比 = 消耗 /（消耗 + 剩余）；
- * - 订阅接口（可选）只提供月度重置时间（`currentPeriodEnd`）。
- *
- * 展示形态与 opencode 相同（`shape: 'windows'`），展示层因而共用同一套「取最紧迫窗口」逻辑。
+ * @module dsh-pet/src/host/balance/providers/commandcode
  */
-import { fetchWithRetry, looseNum, num, obj, queryString, readWindow } from '../internal';
-import type { BalanceProvider, BalanceSuccess, WindowsUsage } from '../types';
+import { fetchWithRetry, looseNum, num, obj, queryString, readWindow } from '../internal.ts';
+import type { BalanceProvider, BalanceSuccess, BalanceUsage, WindowsUsage } from '../types.ts';
 
-/** 控制面基址（`/alpha/*` 固定在根域名） */
+/** 控制面基址（/alpha/* 固定在根域名）。 */
 const API_BASE = 'https://api.commandcode.ai';
 
-/** 滚动窗时长（展示名）：本服务商的 5h 窗口就是 `windowLimits.fiveHour` */
+/** 滚动窗的展示名：本服务商的 5h 窗口即 windowLimits.fiveHour。 */
 const ROLLING_LABEL = '5h';
 
-/** 抓一次 JSON（GET + Bearer），HTTP 非 2xx 抛错；`label` 是接口路径，只进错误信息（便于自查哪一个失败） */
+/** 抓一次 JSON，HTTP 非 2xx 抛错；label 是接口路径，只用于错误信息。 */
 async function fetchJson(url: string, key: string, label: string): Promise<unknown> {
   const res = await fetchWithRetry(url, key);
   if (!res.ok) throw new Error('commandcode ' + label + ' HTTP ' + res.status);
@@ -29,10 +25,33 @@ async function fetchJson(url: string, key: string, label: string): Promise<unkno
 }
 
 /**
- * 解析三个接口的响应 → 成功结果（纯函数：网络与凭证都在外面，测试直接喂真实报文）。
+ * 从 usage 响应读区间用量（本期累计）；五个字段齐全才返回，缺一个即视为没有这项数据。
  *
- * 失败口径：**必填字段缺失/非法一律抛错**（调用方落成 `fetch-error`，绝不伪造 0 余额）；
- * 可选信息（不限额窗口、`cap` 为 0、占位重置时间、订阅缺失）一律省略。
+ * 这些字段来自批量聚合（窗口百分比才是实时的），所以宁可整页不出，也不拿半份数字拼一张会漂的卡片。
+ */
+function readUsage(summary: Record<string, unknown> | undefined): BalanceUsage | undefined {
+  const totalTokens = looseNum(summary?.totalTokens);
+  const inputTokens = looseNum(summary?.totalTokensIn);
+  const outputTokens = looseNum(summary?.totalTokensOut);
+  const requests = looseNum(summary?.totalCount);
+  const spentUsd = looseNum(summary?.totalCost);
+  if (
+    totalTokens === undefined ||
+    inputTokens === undefined ||
+    outputTokens === undefined ||
+    requests === undefined ||
+    spentUsd === undefined
+  ) {
+    return undefined;
+  }
+  return { totalTokens, inputTokens, outputTokens, requests, spentUsd };
+}
+
+/**
+ * 解析额度、订阅与用量三份响应（纯函数，测试直接喂真实报文）。
+ * 月度百分比 = 当期消耗 /（消耗 + 剩余）；剩余 = monthlyCredits + purchasedCredits + freeCredits。
+ * 窗口只在 limited 为真时读取；订阅只提供月度重置时间。
+ * @throws 必填字段缺失或非法时，不伪造 0 余额
  */
 export function parseCommandCode(
   creditsBody: unknown,
@@ -44,7 +63,7 @@ export function parseCommandCode(
   const credits = obj(root?.credits);
   if (!credits) throw new Error('dsh-pet: commandcode 响应缺少 credits');
 
-  // 三个额度字段全缺 = 认不出响应形态：宁可报错，也不把分母当 0 算出「已用 100%」
+  // 三个额度字段全缺即认不出响应形态：宁可报错，也不把分母当 0 算出「已用 100%」。
   const creditFields = [credits.monthlyCredits, credits.purchasedCredits, credits.freeCredits];
   if (creditFields.every((v) => looseNum(v) === undefined)) {
     throw new Error('dsh-pet: commandcode credits 响应缺少额度字段');
@@ -59,12 +78,14 @@ export function parseCommandCode(
   const pool = spent + remaining;
   const data: WindowsUsage = { monthly: pool > 0 ? (spent / pool) * 100 : 0 };
   if (pool > 0) data.monthlyCapUsd = pool;
+  const usage = readUsage(summary);
+  if (usage) data.usage = usage;
 
   const subscription = obj(obj(subscriptionBody)?.data);
   const periodEnd = subscription?.currentPeriodEnd;
   if (typeof periodEnd === 'string' && periodEnd.length > 0) data.monthlyResetsAt = periodEnd;
 
-  // 实际报文把 windowLimits 放在 credits 同级；同时兼容嵌在 credits 内的变体
+  // 实际报文把 windowLimits 放在 credits 同级，同时兼容嵌在 credits 内的变体。
   const limits = obj(root?.windowLimits) ?? obj(credits.windowLimits);
   if (limits?.limited === true) {
     const fiveHour = readWindow(limits.fiveHour);
@@ -85,6 +106,7 @@ export function parseCommandCode(
   return { ok: true, provider, shape: 'windows', data };
 }
 
+/** Command Code 的内置定义。 */
 export const commandCode: BalanceProvider = {
   id: 'commandcode',
   credential: { mode: 'ref', ref: 'COMMANDCODE_API_KEY' },
@@ -101,8 +123,8 @@ export const commandCode: BalanceProvider = {
       '/alpha/billing/credits',
     );
 
-    // 订阅是**可选**的：按量付费账号可能没有订阅（该接口非 2xx），此时只是月度窗口缺重置倒计时，
-    // 三个窗口的百分比一个都不少 → 不因此整体失败（也不编造一个重置时间）
+    // 订阅可选：按量付费账号没有订阅时该接口非 2xx，只缺月度重置时间，
+    // 三个窗口的百分比不受影响，不因此整体失败，也不编造重置时间。
     let subscription: unknown;
     try {
       subscription = await fetchJson(
@@ -114,12 +136,10 @@ export const commandCode: BalanceProvider = {
       subscription = undefined;
     }
 
-    // since 只在拿得到当期起始时间时带：该接口的默认区间由服务端决定，插件不猜
-    const periodStart = obj(obj(subscription)?.data)?.currentPeriodStart;
+    // 不带 since：服务端默认区间就是计费周期；实测带 since 会把本期请求数与花费算少一截
+    // （两个响应的 periodStart 相同），所以以服务端默认区间为准。
     const summary = await fetchJson(
-      API_BASE +
-        '/alpha/usage/summary' +
-        queryString({ since: typeof periodStart === 'string' ? periodStart : undefined, orgId }),
+      API_BASE + '/alpha/usage/summary' + queryString({ orgId }),
       key,
       '/alpha/usage/summary',
     );

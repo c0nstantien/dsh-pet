@@ -20,12 +20,15 @@ import {
   HELPER_STABLE_MS,
   HELPER_STOP_GRACE_MS,
   HelperProcess,
+  crashLoopAdvice,
+  describeExit,
   dshHomeDir,
   defaultElectronExe,
   ensureElectronDownload,
   hasGraphicalDisplay,
   helperRunIsStable,
   helperSpawnEnv,
+  readElectronVersion,
   restartBackoffDelayMs,
   resolveElectronPath,
   shouldCircuitBreak,
@@ -101,12 +104,32 @@ describe('defaultElectronExe —— 落地可执行文件路径', () => {
 });
 
 describe('resolveElectronPath —— 候选优先级', () => {
+  test('Electron cache validation: skips empty files and directories before a usable candidate', () => {
+    withIsolatedHome((dir) => {
+      const empty = join(dir, 'empty');
+      const directory = join(dir, 'folder');
+      const usable = join(dir, 'usable');
+      writeFileSync(empty, '');
+      mkdirSync(directory);
+      writeFileSync(usable, 'executable fixture');
+      assert.equal(resolveElectronPath([empty, directory, usable]), usable);
+    });
+  });
+
+  test('Electron cache validation: does not resolve an empty managed cache', () => {
+    withIsolatedHome(() => {
+      const path = defaultElectronExe();
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, '');
+      assert.equal(resolveElectronPath(), undefined);
+    });
+  });
   test('显式候选命中时直接返回（不读环境变量）', () => {
     withIsolatedHome((dir) => {
       const fake = join(dir, 'fake-electron.exe');
-      writeFileSync(fake, '');
+      writeFileSync(fake, 'executable fixture');
       const other = join(dir, 'other-electron.exe');
-      writeFileSync(other, '');
+      writeFileSync(other, 'executable fixture');
       assert.equal(resolveElectronPath([fake, other]), fake);
     });
   });
@@ -114,7 +137,7 @@ describe('resolveElectronPath —— 候选优先级', () => {
   test('候选顺序：第一个存在的胜出', () => {
     withIsolatedHome((dir) => {
       const fake = join(dir, 'fake-electron.exe');
-      writeFileSync(fake, '');
+      writeFileSync(fake, 'executable fixture');
       assert.equal(resolveElectronPath([join(dir, 'missing.exe'), fake]), fake);
     });
   });
@@ -122,7 +145,7 @@ describe('resolveElectronPath —— 候选优先级', () => {
   test('DSH_PET_ELECTRON_PATH 环境变量参与候选（在显式候选之后）', () => {
     withIsolatedHome((dir) => {
       const viaEnv = join(dir, 'env-electron.exe');
-      writeFileSync(viaEnv, '');
+      writeFileSync(viaEnv, 'executable fixture');
       process.env.DSH_PET_ELECTRON_PATH = viaEnv;
       assert.equal(resolveElectronPath([]), viaEnv);
     });
@@ -137,7 +160,7 @@ describe('resolveElectronPath —— 候选优先级', () => {
   test('候选去重：重复路径只保留一次（结果仍能命中）', () => {
     withIsolatedHome((dir) => {
       const fake = join(dir, 'fake-electron.exe');
-      writeFileSync(fake, '');
+      writeFileSync(fake, 'executable fixture');
       assert.equal(resolveElectronPath([fake, fake, join(dir, 'missing.exe')]), fake);
     });
   });
@@ -145,7 +168,7 @@ describe('resolveElectronPath —— 候选优先级', () => {
   test('空字符串 / null 候选被跳过', () => {
     withIsolatedHome((dir) => {
       const fake = join(dir, 'fake-electron.exe');
-      writeFileSync(fake, '');
+      writeFileSync(fake, 'executable fixture');
       assert.equal(resolveElectronPath(['', undefined, fake] as Array<string | undefined>), fake);
     });
   });
@@ -161,10 +184,61 @@ describe('resolveElectronPath —— 候选优先级', () => {
             : 'electron';
       const landed = join(dir, 'dshhome', 'electron', rel);
       mkdirSync(dirname(landed), { recursive: true });
-      writeFileSync(landed, '');
+      writeFileSync(landed, 'executable fixture');
       assert.equal(resolveElectronPath([]), landed);
     });
   });
+});
+
+test('Electron cache validation: an existing non-empty file avoids a download', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-pet-cache-'));
+  const previous = process.env.DSH_HOME;
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  });
+  process.env.DSH_HOME = home;
+  const path = defaultElectronExe();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, 'executable fixture');
+  let logs = 0;
+  assert.equal(
+    await ensureElectronDownload({
+      onLog: () => {
+        logs++;
+      },
+    }),
+    path,
+  );
+  assert.equal(logs, 0);
+});
+
+test('Electron cache validation: an empty file enters the download path and reports failure', async (t) => {
+  const home = mkdtempSync(join(tmpdir(), 'dsh-pet-cache-'));
+  const previous = process.env.DSH_HOME;
+  t.after(() => {
+    if (previous === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  });
+  process.env.DSH_HOME = home;
+  const path = defaultElectronExe();
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, '');
+  t.mock.method(console, 'log', () => {});
+  t.mock.method(console, 'warn', () => {});
+  const logs: string[] = [];
+  // 非法版本 + 仅回环的镜像：这个用例绝不能真的下载运行时。
+  const result = await ensureElectronDownload({
+    version: 'invalid-version',
+    mirror: 'http://127.0.0.1:1/',
+    timeoutMs: 200,
+    onLog: (e) => logs.push(e.text),
+  });
+  assert.equal(result, undefined);
+  assert.ok(logs.some((m) => m.includes('缓存无效')));
+  assert.ok(logs.some((m) => m.includes('下载失败')));
 });
 
 describe('hasGraphicalDisplay —— 无图形环境时不拉起 Electron', () => {
@@ -233,6 +307,75 @@ describe('helperRunIsStable —— 稳定运行 ≥3 分钟后计数清零', () 
   });
 });
 
+describe('describeExit —— 崩溃退出码翻成可读片段', () => {
+  test('访问违例：无符号与有符号两种报法指向同一个 0xC0000005', () => {
+    assert.equal(describeExit(3221225477, null), 'code=3221225477 (0xC0000005 访问违例), signal=null');
+    assert.equal(describeExit(-1073741819, null), 'code=-1073741819 (0xC0000005 访问违例), signal=null');
+  });
+
+  test('断点：0x80000003 标注为沙箱初始化失败', () => {
+    assert.equal(describeExit(2147483651, null), 'code=2147483651 (0x80000003 断点（沙箱初始化失败）), signal=null');
+  });
+
+  test('普通退出码不补十六进制：避免把 exit 1 写成 0x1', () => {
+    assert.equal(describeExit(1, null), 'code=1, signal=null');
+    assert.equal(describeExit(0, null), 'code=0, signal=null');
+  });
+
+  test('未收录的 NTSTATUS：只给十六进制，不编造含义', () => {
+    assert.equal(describeExit(3221225725, null), 'code=3221225725 (0xC00000FD), signal=null');
+  });
+
+  test('被信号终止：code=null，信号原样带上', () => {
+    assert.equal(describeExit(null, 'SIGKILL'), 'code=null, signal=SIGKILL');
+  });
+});
+
+describe('crashLoopAdvice —— 熔断建议按平台分支', () => {
+  test('Windows：给换版本与指向现成可执行文件，不提 DISPLAY', () => {
+    const advice = crashLoopAdvice('win32');
+    assert.match(advice, /DSH_PET_ELECTRON_VERSION/);
+    assert.match(advice, /DSH_PET_ELECTRON_PATH/);
+    assert.match(advice, /DSH_PET_RESTART_MAX_FAILURES/);
+    assert.ok(!advice.includes('DISPLAY'), 'Windows 上建议配 DISPLAY 是误导');
+  });
+
+  test('Linux：给显示环境与 Xvfb 逃生口', () => {
+    const advice = crashLoopAdvice('linux');
+    assert.match(advice, /DISPLAY/);
+    assert.match(advice, /DSH_PET_DESKTOP_FORCE=1/);
+  });
+
+  test('macOS：指向现成可执行文件，不提显示环境', () => {
+    const advice = crashLoopAdvice('darwin');
+    assert.match(advice, /DSH_PET_ELECTRON_PATH/);
+    assert.ok(!advice.includes('DISPLAY'));
+  });
+});
+
+describe('readElectronVersion —— 读落地目录里的 version 文件', () => {
+  test('正常读取：内容去掉换行后返回', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-pet-version-'));
+    try {
+      writeFileSync(join(dir, 'version'), '43.3.0\n');
+      assert.equal(readElectronVersion(join(dir, 'electron.exe')), '43.3.0');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('文件缺失或内容不是版本号：返回 undefined，不编造', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dsh-pet-version-'));
+    try {
+      assert.equal(readElectronVersion(join(dir, 'electron.exe')), undefined);
+      writeFileSync(join(dir, 'version'), 'not-a-version');
+      assert.equal(readElectronVersion(join(dir, 'electron.exe')), undefined);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('HelperProcess —— 退避/熔断的**接线**（纯函数之外，调用点本身）', () => {
   const sleep = (ms: number) => new Promise((resolve2) => setTimeout(resolve2, ms));
 
@@ -275,7 +418,7 @@ describe('HelperProcess —— 退避/熔断的**接线**（纯函数之外，�
   }
 
   test('首次崩溃等待 base（默认 750ms），不是 2×base', async () => {
-    // 曾经是「先自增再算延迟」：计数 1 取 2^1 = 2×base，首延变成 1500ms，与注释/旧版固定 750ms 都不符
+    // 首延必须是 base：计数在算延迟前不能自增（否则计数 1 取 2^1 = 2×base，首延变成 1500ms）
     const logs = await runCrashLoop({ DSH_PET_RESTART_BASE_MS: '1' }, 20);
     const first = logs.find((l) => l.includes('restarting in'));
     assert.ok(first, '应有一条重启告警');
@@ -283,7 +426,7 @@ describe('HelperProcess —— 退避/熔断的**接线**（纯函数之外，�
   });
 
   test('DSH_PET_RESTART_MAX_FAILURES 真的接进判定：设 3 → 第 3 次就熔断', async () => {
-    // 曾经这个环境变量只出现在日志文案里，判定用的是 shouldCircuitBreak 的默认值 12
+    // DSH_PET_RESTART_MAX_FAILURES 必须接进判定：不能只出现在日志文案里、判定仍用默认值 12
     const logs = await runCrashLoop({ DSH_PET_RESTART_BASE_MS: '1', DSH_PET_RESTART_MAX_FAILURES: '3' }, 60);
     const tripped = logs.find((l) => l.includes('circuit breaker tripped'));
     assert.ok(tripped, '按用户设定的阈值应熔断');
@@ -373,8 +516,8 @@ describe('HelperProcess.stopAndWait —— 停止要等进程真正退出（issu
   });
 
   test('连 SIGKILL 都不退 → 宽限期后仍 resolve（绝不挂住配置保存）', async (t) => {
-    // FakeChild has no process handle to keep the event loop alive while
-    // production's unref'ed watchdogs wait. Advance both deadlines explicitly.
+    // FakeChild 没有真实进程句柄来撑住事件循环（生产的看门狗是 unref 的），
+    // 所以这里显式推进两个截止时间。
     t.mock.timers.enable({ apis: ['setTimeout'] });
     const { fake, stop } = fakeHelper(20);
     let settled = false;
@@ -448,7 +591,7 @@ describe('HelperProcess failed spawn recovery', () => {
           const child = hp.start()!;
           const [error] = await once(child, 'error');
           assert.equal(error.code, code);
-          // Repair the configured executable before the existing backoff expires.
+          // 在既有退避到期前修好配置的可执行文件。
           options.command = process.execPath;
           await Promise.race([
             ready,

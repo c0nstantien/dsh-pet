@@ -18,6 +18,7 @@ import {
   migrateUserConfig,
   readAllConfig,
   readUserConfig,
+  removeRoundsByTs,
   saveUserConfig,
   sliceMemoryRounds,
   syncUserConfigFromDefault,
@@ -161,6 +162,55 @@ describe('readAllConfig —— events 缺失仍回退默认（既有行为不回
       overlay: { whisperPrompt: '改个提示词' },
       expectWorkStatus: BASE.animations.events.workStatus,
     });
+  });
+});
+
+describe('readAllConfig —— animations.sleep（可选段）校验', () => {
+  /** 用给定 sleep 覆盖内置默认的 animations，读回成品里 main 条目的 animations */
+  function mergedAnimations(sleep: unknown): Record<string, unknown> {
+    const animations = sleep === undefined ? BASE.animations : { ...BASE.animations, sleep };
+    return readAllConfig(withBase({}, { animations })).main.animations as Record<string, unknown>;
+  }
+
+  test('合法的一整套原样保留（start / loop / end 三个候选数组）', () => {
+    const sleep = [{ start: ['蹲-开始'], loop: ['蹲-循环'], end: ['蹲-起来'] }];
+    assert.deepEqual(mergedAnimations(sleep).sleep, sleep);
+  });
+
+  test('不写 sleep：合法，该条目只是没有睡觉功能（其余动画不受影响）', () => {
+    const anim = mergedAnimations(undefined);
+    assert.equal(anim.sleep, undefined);
+    assert.deepEqual(anim.idle, BASE.animations.idle);
+  });
+
+  test('非法形态整段回退默认：空套数组 / 空段 / 缺段 / 空串成员 / 非字符串成员 / 非数组', () => {
+    const bad: unknown[] = [
+      [],
+      [{ start: [], loop: ['蹲-循环'], end: ['蹲-起来'] }],
+      [{ start: ['蹲-开始'], loop: ['蹲-循环'] }],
+      [{ start: ['蹲-开始'], loop: ['蹲-循环'], end: [''] }],
+      [{ start: ['蹲-开始'], loop: ['蹲-循环'], end: [1] }],
+      'sleep',
+    ];
+    for (const sleep of bad) {
+      assert.deepEqual(mergedAnimations(sleep), BASE.animations, `非法 sleep 必须整段回退：${JSON.stringify(sleep)}`);
+    }
+  });
+
+  test('种类文件自己写 animations 但不写 sleep：合法，只是该种类没有睡觉功能', () => {
+    const paths = withBase({});
+    mkdirSync(paths.petDir, { recursive: true });
+    writeFileSync(
+      join(paths.petDir, 'pig-config.json'),
+      JSON.stringify({
+        pets: [{ id: 'pig1', name: '猪', display: 'web' }],
+        animations: BASE.animations,
+        animationWeights: BASE.animationWeights,
+      }),
+    );
+    const pig = readAllConfig(paths).pig.animations as Record<string, unknown>;
+    assert.equal(pig.sleep, undefined);
+    assert.deepEqual(pig.idle, BASE.animations.idle, '没写 sleep 不得让整份 animations 失效');
   });
 });
 
@@ -419,6 +469,83 @@ describe('JSONC 配置读取：字符串中的注释标记与转义', () => {
 
 const PETS = BASE.pets;
 
+describe('saveUserConfig pet IDs', () => {
+  test('rejects repeated IDs before writing a configuration that would lose a pet', () => {
+    assert.equal(
+      saveOnce({
+        pets: [
+          { ...PETS[0], name: 'first' },
+          { ...PETS[0], name: 'second' },
+        ],
+      }),
+      null,
+    );
+  });
+
+  test('rejects IDs that collide after the same trimming used during reads', () => {
+    assert.equal(
+      saveOnce({
+        pets: [
+          { ...PETS[0], id: ' main ' },
+          { ...PETS[0], id: 'main' },
+        ],
+      }),
+      null,
+    );
+  });
+
+  test('rejects blank and non-string IDs instead of writing unreadable entries', () => {
+    for (const id of ['', '   ', '\t\n', 42, true, null, {}, ['main']]) {
+      assert.equal(saveOnce({ pets: [{ ...PETS[0], id }] }), null, JSON.stringify(id));
+    }
+  });
+
+  test('canonical IDs survive a save/read round trip, including Chinese IDs', () => {
+    const clean = saveOnce({
+      pets: [
+        { ...PETS[0], id: ' main ' },
+        { ...PETS[0], id: ' 副宠 ' },
+      ],
+    });
+    assert.ok(clean);
+    const pets = clean.pets as Record<string, unknown>[];
+    assert.deepEqual(
+      pets.map((p) => p.id),
+      ['main', '副宠'],
+    );
+    const paths = withBase({}, clean);
+    try {
+      assert.deepEqual(
+        (readAllConfig(paths).main.pets as Record<string, unknown>[]).map((p) => p.id),
+        ['main', '副宠'],
+      );
+    } finally {
+      rmSync(dirname(paths.defaultFile), { recursive: true, force: true });
+    }
+  });
+
+  test('keeps distinct case-sensitive IDs and allows matching display names', () => {
+    const clean = saveOnce({
+      pets: [
+        { ...PETS[0], id: 'Blue' },
+        { ...PETS[0], id: 'blue' },
+      ],
+    });
+    assert.ok(clean);
+    assert.deepEqual(
+      (clean.pets as Record<string, unknown>[]).map((p) => p.id),
+      ['Blue', 'blue'],
+    );
+  });
+
+  test('retains the ID length limit and path character restrictions', () => {
+    assert.ok(saveOnce({ pets: [{ ...PETS[0], id: 'a'.repeat(64) }] }));
+    for (const id of ['a'.repeat(65), 'pet/name', 'pet\\name', 'pet:name', 'pet\0name']) {
+      assert.equal(saveOnce({ pets: [{ ...PETS[0], id }] }), null);
+    }
+  });
+});
+
 describe('saveUserConfig —— 表情包配图开关（白名单 + 透传保留）', () => {
   test('两个配图开关随请求体写入', () => {
     const out = saveOnce({ pets: PETS, whisperImageEnabled: true, chatImageEnabled: true });
@@ -450,6 +577,42 @@ describe('saveUserConfig —— 表情包配图开关（白名单 + 透传保留
     );
     assert.equal(out?.whisperImageEnabled, true); // 请求体优先
     assert.equal(out?.chatImageEnabled, true); // 未传的旧值仍透传保留
+  });
+});
+
+describe('saveUserConfig —— 对话动作联动开关（白名单 + 透传保留）', () => {
+  test('随请求体写入，缺省不凭空造字段', () => {
+    const out = saveOnce({ pets: PETS, chatAnimationEnabled: false });
+    assert.equal(out?.chatAnimationEnabled, false);
+    assert.equal('chatAnimationEnabled' in (saveOnce({ pets: PETS }) ?? {}), false);
+  });
+
+  test('传非布尔 → 整体拒绝（宿主回 400）', () => {
+    assert.equal(saveOnce({ pets: PETS, chatAnimationEnabled: 'yes' }), null);
+  });
+
+  test('请求体传了就覆盖磁盘旧值', () => {
+    const out = saveOnce({ pets: PETS, chatAnimationEnabled: true }, { pets: PETS, chatAnimationEnabled: false });
+    assert.equal(out?.chatAnimationEnabled, true);
+  });
+});
+
+describe('readAllConfig —— 对话动作联动开关合并（用户层可覆盖 / 非法回退默认）', () => {
+  test('内置默认 true；用户层写 false → 读 false', () => {
+    assert.equal(readAllConfig(withBase({ chatAnimationEnabled: true })).main.chatAnimationEnabled, true);
+    assert.equal(
+      readAllConfig(withBase({ chatAnimationEnabled: true }, { chatAnimationEnabled: false })).main
+        .chatAnimationEnabled,
+      false,
+    );
+  });
+
+  test('用户层写了非法值 → 回退内置默认', () => {
+    assert.equal(
+      readAllConfig(withBase({ chatAnimationEnabled: true }, { chatAnimationEnabled: 'yes' })).main
+        .chatAnimationEnabled,
+      true,
+    );
   });
 });
 
@@ -707,6 +870,44 @@ describe('saveUserConfig —— 碎碎念 / 对话模型（白名单 + 透传保
   });
 });
 
+describe('saveUserConfig —— 语音细分开关（白名单 + 透传保留）', () => {
+  test('随请求体写入（设置页「语音播报」卡的两个开关）', () => {
+    const out = saveOnce({ pets: PETS, voiceWhisperEnabled: true, voiceTodoEnabled: true });
+    assert.equal(out?.voiceWhisperEnabled, true);
+    assert.equal(out?.voiceTodoEnabled, true);
+  });
+
+  test('false 是合法值，照常落盘', () => {
+    const out = saveOnce({ pets: PETS, voiceWhisperEnabled: false, voiceTodoEnabled: false });
+    assert.equal(out?.voiceWhisperEnabled, false, 'false 不能被当成「没传」而走透传');
+    assert.equal(out?.voiceTodoEnabled, false);
+  });
+
+  test('未传时透传磁盘旧值；磁盘上也没有则不凭空造字段', () => {
+    const kept = saveOnce({ pets: PETS }, { pets: PETS, voiceWhisperEnabled: true, voiceTodoEnabled: true });
+    assert.equal(kept?.voiceWhisperEnabled, true, '未传时必须原样保留磁盘上的手改值');
+    assert.equal(kept?.voiceTodoEnabled, true);
+    const fresh = saveOnce({ pets: PETS }) ?? {};
+    assert.equal('voiceWhisperEnabled' in fresh, false, '磁盘上也没有时不得凭空写入');
+    assert.equal('voiceTodoEnabled' in fresh, false);
+  });
+
+  test('非布尔 → 整体拒绝（宿主回 400；与读取侧 topFieldValid 同一套规则）', () => {
+    for (const value of ['true', 1, null, {}, []]) {
+      assert.equal(
+        saveOnce({ pets: PETS, voiceWhisperEnabled: value }),
+        null,
+        `voiceWhisperEnabled ${JSON.stringify(value)} 必须被拒绝`,
+      );
+      assert.equal(
+        saveOnce({ pets: PETS, voiceTodoEnabled: value }),
+        null,
+        `voiceTodoEnabled ${JSON.stringify(value)} 必须被拒绝`,
+      );
+    }
+  });
+});
+
 describe('saveUserConfig —— 对话历史条数 chatMemoryRounds（白名单 + 透传保留）', () => {
   test('随请求体写入（设置页「AI 模型与对话上下文」的数字输入框）', () => {
     const out = saveOnce({ pets: PETS, chatMemoryRounds: 9 });
@@ -871,7 +1072,7 @@ describe('readAllConfig —— 宠物固定合并（缺失取默认 / 非法回�
 });
 
 describe('syncUserConfigFromDefault —— 同步（内置默认原文写入用户层）', () => {
-  /** 默认文件写入给定原文；用户文件故意放在**尚不存在**的子目录里（验证父目录自建） */
+  /** 默认文件写入给定原文；用户文件故意放在尚不存在的子目录里（验证父目录自建） */
   function fixture(raw: string): { paths: ConfigPaths; dir: string } {
     const dir = mkdtempSync(join(tmpdir(), 'dsh-pet-sync-test-'));
     const paths: ConfigPaths = {
@@ -910,7 +1111,7 @@ describe('syncUserConfigFromDefault —— 同步（内置默认原文写入用�
     try {
       const before = readAllConfig(paths); // 无用户层：纯内置默认
       syncUserConfigFromDefault(paths);
-      // deepStrictEqual：值/结构必须完全一致。**不看键顺序**——用户层会走 mergePets 重建实例，
+      // deepStrictEqual：值/结构必须完全一致。不看键顺序——用户层会走 mergePets 重建实例，
       // 键序被规范化为 id 在前（纯外观差异；已用生产 assets/config.jsonc 实测确认值完全一致）。
       assert.deepStrictEqual(readAllConfig(paths), before);
     } finally {
@@ -933,10 +1134,11 @@ describe('syncUserConfigFromDefault —— 同步（内置默认原文写入用�
 /**
  * 文件宠物条目的基座 —— 「全局默认 + 种类可覆盖」。
  *
- * 判据：GLOBAL_DEFAULT_KEYS 那 9 个（physics / confineToScreen / 两个配图开关 / chatImageLimit /
- * chatMemoryRounds / whisperModel / chatModel / eventsRefreshSec）是**用户级「成本 / 偏好 /
- * 环境 / 节奏」参数**，用户层写了就对**所有条目**生效（含 pet pack）；种类文件自己写了就覆盖
- * 自己那份。其余顶层字段（人设 / 表情包 / 动画池 / 文案）的基座仍是**内置默认**——
+ * 判据：GLOBAL_DEFAULT_KEYS 列出的字段（physics / confineToScreen / 两个配图开关 /
+ * 对话动作联动开关 / chatImageLimit / chatMemoryRounds / whisperModel / chatModel /
+ * eventsRefreshSec 等）是用户级「成本 / 偏好 /
+ * 环境 / 节奏」参数，用户层写了就对所有条目生效（含 pet pack）；种类文件自己写了就覆盖
+ * 自己那份。其余顶层字段（人设 / 表情包 / 动画池 / 文案）的基座仍是内置默认——
  * 一个种类一份人设、一份池、一个表情包目录，各写一份才是 pet pack 的意义。
  */
 describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类可覆盖', () => {
@@ -945,6 +1147,7 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     ...BASE,
     whisperImageEnabled: true,
     chatImageEnabled: true,
+    chatAnimationEnabled: true,
     chatImageLimit: 0,
     confineToScreen: false,
     whisperModel: { provider: '', model: '' },
@@ -992,13 +1195,14 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     }
   }
 
-  test('用户层写了这 9 个字段 → 种类条目逐个继承（不再只吃内置默认）', () => {
+  test('用户层写了这 10 个字段 → 种类条目逐个继承（不再只吃内置默认）', () => {
     const out = merged({
       overlay: {
         physics: { ...(BASE_FULL.physics as Record<string, unknown>), petCollision: true, gravity: 999 },
         confineToScreen: true,
         whisperImageEnabled: false,
         chatImageEnabled: false,
+        chatAnimationEnabled: false,
         chatImageLimit: 4,
         chatMemoryRounds: 9,
         whisperModel: { provider: 'p1', model: 'm1' },
@@ -1013,6 +1217,7 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     assert.equal(pig.confineToScreen, true);
     assert.equal(pig.whisperImageEnabled, false);
     assert.equal(pig.chatImageEnabled, false);
+    assert.equal(pig.chatAnimationEnabled, false, 'chatAnimationEnabled 应继承用户层');
     assert.equal(pig.chatImageLimit, 4, 'chatImageLimit 应继承用户层');
     assert.equal(pig.chatMemoryRounds, 9);
     assert.deepEqual(pig.whisperModel, { provider: 'p1', model: 'm1' });
@@ -1157,5 +1362,41 @@ describe('sliceMemoryRounds —— chatMemoryRounds=0 必须真正不带历史�
 
   test('rounds=0 且消息列表原本为空 → 空', () => {
     assert.deepEqual(sliceMemoryRounds([], 0), []);
+  });
+});
+
+describe('removeRoundsByTs —— 按轮删除（一轮两条共享 ts，成对走）', () => {
+  const msgs = [
+    { content: 'u1', ts: 1000 },
+    { content: 'a1', ts: 1000 },
+    { content: 'u2', ts: 2000 },
+    { content: 'a2', ts: 2000 },
+  ];
+
+  test('命中的轮成对移除，其余原样保留', () => {
+    const r = removeRoundsByTs(msgs, [1000]);
+    assert.deepEqual(
+      r.messages.map((m) => m.content),
+      ['u2', 'a2'],
+    );
+    assert.equal(r.removed, 2);
+  });
+
+  test('不存在的 ts → 不改动，removed=0', () => {
+    const r = removeRoundsByTs(msgs, [999]);
+    assert.deepEqual(r.messages, msgs);
+    assert.equal(r.removed, 0);
+  });
+
+  test('空集合 → 一条都不删（清空是调用方的另一条分支，不能靠空集合表达）', () => {
+    const r = removeRoundsByTs(msgs, []);
+    assert.equal(r.messages.length, msgs.length);
+    assert.equal(r.removed, 0);
+  });
+
+  test('全部命中 → 空列表，removed 等于原长度', () => {
+    const r = removeRoundsByTs(msgs, [1000, 2000]);
+    assert.deepEqual(r.messages, []);
+    assert.equal(r.removed, 4);
   });
 });

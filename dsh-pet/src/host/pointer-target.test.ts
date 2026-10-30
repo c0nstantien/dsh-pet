@@ -2,12 +2,12 @@
  * 桌面 helper「点击穿透兜底通道」的判定测试（采纳 issue #55 报告者的补丁）。
  *
  * 背景：窗口默认整窗点击穿透，只靠 Electron 的 forward 低级鼠标钩子把 mousemove 转发进渲染端做命中
- * 判定——**整条链路只有一个入口**。该钩子在 Windows 上会静默失效（回调超时被系统摘掉 / 被别的软件
+ * 判定——整条链路只有一个入口。该钩子在 Windows 上会静默失效（回调超时被系统摘掉 / 被别的软件
  * 的钩子干扰），失效后没有任何退路：光标悬浮不触发手套光标、拖不动、点击与右键全无反应。
- * 报告者的修法：主进程按**真实光标位置**独立判定并翻转，不依赖那条转发链路。
+ * 报告者的修法：主进程按真实光标位置独立判定并翻转，不依赖那条转发链路。
  *
  * 本文件把三件事钉住：
- *   ① 判定规则（宠物身上=可交互；窗口余量区=**保持当前**，菜单/弹窗才点得到；窗外=穿透）；
+ *   ① 判定规则（宠物身上=可交互；窗口余量区=保持当前，菜单/弹窗才点得到；窗外=穿透）；
  *   ② 几何：窗口矩形 → 宠物身体命中区（必须与渲染端 sprite.js 的命中判定同源，否则两条通道打架）；
  *   ③ 源码守卫：helper 的 main.js 里必须有兜底显示与兜底轮询（Electron 起不来，只能读源码断言）。
  *
@@ -15,7 +15,7 @@
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -35,6 +35,15 @@ const {
 
 /** 包内文件源码（守卫用；相对 src/host/ 解析） */
 const readSource = (rel: string): string => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+
+/** 渲染端宠物本体的源码：已按职责拆成 sprite.js 与 sprite-*.js，守卫要读全份。 */
+const spriteSource = (): string =>
+  [
+    readSource(helper + 'sprite.js'),
+    ...readdirSync(fileURLToPath(new URL(helper + 'sprite/', import.meta.url))).map((name) =>
+      readSource(helper + 'sprite/' + name),
+    ),
+  ].join('\n');
 
 /** 真实窗口矩形（DIP）：宠物 size 462 → 窗口 = 462 + 两侧各 231 = 924；高度 = 画布 + bottomPad + 两侧余量 */
 const bounds = { x: 1000, y: 500, width: 924, height: 743 };
@@ -217,10 +226,20 @@ describe('菜单/聊天框只占控件矩形，不吞掉其它应用点击', () 
 });
 
 describe('源码守卫 —— helper 的两个兜底必须在位', () => {
-  const main = readSource(helper + 'main.js');
+  /** 主进程源码：main.js 是装配根，行为散在 main/ 下的模块里，守卫要读全份。 */
+  const mainSource = (dir: string): string =>
+    [
+      readSource(dir + 'main.js'),
+      ...readdirSync(fileURLToPath(new URL(dir + 'main/', import.meta.url)))
+        .filter((name) => name.endsWith('.js'))
+        .map((name) => readSource(dir + 'main/' + name)),
+    ].join('\n');
+  const main = mainSource(helper);
 
   test('#55-1 兜底显示：ready-to-show 之外还要有"加载完成后仍未显示就 show"', () => {
-    assert.ok(/once\('ready-to-show', \(\) => win\.showInactive\(\)\)/.test(main), '显示不得抢其它应用焦点');
+    // 回调可能是单行 `() => win.showInactive()`，也可能多行（多行时先 keepOffTaskbar 再 show）：
+    // 只约束"回调内部最终用 showInactive、不抢焦点"，不约束写法本身。
+    assert.ok(/once\('ready-to-show', \(\) => \{?[\s\S]*?win\.showInactive\(\)/.test(main), '显示不得抢其它应用焦点');
     assert.ok(
       /once\('did-finish-load'/.test(main),
       '必须有 did-finish-load 兜底（paintWhenInitiallyHidden:false 时 ready-to-show 永不触发）',
@@ -281,15 +300,12 @@ describe('守卫：主进程镜像的命中盒常量不得与 src/shared/constan
     assert.deepEqual(HIT_BOX, { x0: Number(hit[1]), y0: Number(hit[2]), x1: Number(hit[3]), y1: Number(hit[4]) });
     // 画布宽 shared 没有导出（各处都用字面量 640）：这里断言渲染端也是同一约定，避免我们把宽写成别的值
     assert.equal(STAGE_W, 640);
-    assert.ok(
-      /S\.HIT_BOX\.x0 \/ 640/.test(readSource(helper + 'sprite.js')),
-      'sprite.js 的命中判定用 640 作画布宽——两边必须同一约定',
-    );
+    assert.ok(/S\.HIT_BOX\.x0 \/ 640/.test(spriteSource()), 'sprite.js 的命中判定用 640 作画布宽——两边必须同一约定');
   });
 });
 
 describe('守卫：渲染端的输入租约必须在位（helper 随包发行，只能读源码断言）', () => {
-  const sprite = readSource(helper + 'sprite.js');
+  const sprite = spriteSource();
 
   test('租约来源必须**正好**是那三个"正在用窗口输入"的状态', () => {
     const m = /inputBusy\(\)\s*\{([\s\S]*?)\n {2}\}/.exec(sprite);

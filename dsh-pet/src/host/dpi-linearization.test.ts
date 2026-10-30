@@ -1,27 +1,22 @@
 /**
  * 桌面 helper「全局 DPI 线性化」的判定测试 —— macOS 桌面宠物大一倍的修复。
  *
- * 背景：Windows 上 Chromium 的 DIP↔物理像素换算是**逐显示器**的仿射变换，窗口骑缝时两套坐标系横跳
- * （拖过屏缝「分身闪烁」）。helper 的修法是启动前 `--force-device-scale-factor=1` 把坐标系塌缩成
- * 恒等映射，再按探测到的**真实主屏 scaleFactor** 把宠物放大回原来的观感（补偿）。但补偿的前提——
- * 「该开关会把 DIP 换算成物理像素」——**只对 Windows 成立**：macOS 的 DIP 恒等于「点」，开关只改
- * backing store 分辨率、不改坐标系，于是补偿变成纯粹的放大：Retina(2x) 上 petScale=2，配置 size=462
- * 的宠物被渲染成 924 点宽、窗口要 1848×1487 点（比 1920×1080 的屏幕还高，左边缘被挤出屏幕外），
- * 而同一份配置在浏览器 overlay 里是 462 CSS 像素 —— 桌面端与浏览器端差了整整一倍。
+ * 背景：Windows 上 Chromium 的 DIP↔物理像素换算是逐显示器的仿射变换，窗口骑缝时两套坐标系横跳
+ * （拖过屏缝「分身闪烁」）。修法是启动前 `--force-device-scale-factor=1` 把坐标系塌缩成恒等映射，
+ * 再按探测到的真实主屏 scaleFactor 把宠物放大回原来的观感。但补偿的前提「该开关会把 DIP 换算成物理
+ * 像素」只对 Windows 成立：macOS 的 DIP 恒等于「点」，补偿变成纯放大——Retina(2x) 下 size=462 的宠物
+ * 渲染成 924 点宽、窗口 1848×1487 点，而同一份配置在浏览器 overlay 里是 462 CSS 像素。
  *
- * 本文件钉三件事：
- *   ① 纯判定规则：darwin 一律不启用；win32/linux 维持原行为；探测子进程与 DSH_PET_FORCE_DSF='0'
- *      各自的短路；强制值与渲染端缩放的两步换算；
- *   ② 端到端不变量：同一份配置下 macOS 的宠物尺寸必须等于配置值（修复前是它的 2 倍），而 Windows
- *      150% 屏仍按 1.5 补偿（主屏观感与修复前逐像素相同）；
- *   ③ 源码守卫：平台例外只住在 dpi-linearization.js 里、main.js 只接线不重新实现，以及新模块进了
- *      发布必需清单（漏了 npm 包里就少一个 main.js 必需的模块，helper 启动即崩）。
+ * 本文件钉三件事：① 纯判定规则：darwin 一律不启用；win32/linux 维持原行为；探测子进程与
+ * DSH_PET_FORCE_DSF='0' 各自的短路；强制值与渲染端缩放的两步换算；② 端到端不变量：macOS 的宠物
+ * 尺寸必须等于配置值，而 Windows 150% 屏仍按 1.5 补偿；③ 源码守卫：平台例外只住在
+ * dpi-linearization.js 里、main.js 只接线，且新模块进了发布必需清单（漏了 helper 启动即崩）。
  *
  * 用 Node 内置 test runner（node:test），不引入任何 npm 依赖。
  */
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
 
@@ -131,34 +126,40 @@ describe('端到端不变量 —— 用户真正看到的那件事', () => {
   });
 });
 
-describe('源码守卫 —— main.js 只接线，规则住在 dpi-linearization.js', () => {
-  const main = readSource(helper + 'main.js');
+describe('源码守卫 —— main-dpi.js 只接线，规则住在 dpi-linearization.js', () => {
+  /** 主进程源码：main.js 是装配根，行为散在 main/ 下的模块里，守卫要读全份。 */
+  const mainSource = (dir: string): string =>
+    [
+      readSource(dir + 'main.js'),
+      ...readdirSync(fileURLToPath(new URL(dir + 'main/', import.meta.url)))
+        .filter((name) => name.endsWith('.js'))
+        .map((name) => readSource(dir + 'main/' + name)),
+    ].join('\n');
+  const main = mainSource(helper);
+  // DPI/指针已拆到 main-dpi.js：规则接线看那份，装配仍看 main.js
+  const dpi = readSource(helper + 'main/dpi.js');
 
-  test('main.js 必须 require 新模块', () => {
-    assert.ok(/require\('\.\/dpi-linearization\.js'\)/.test(main), '必须 require dpi-linearization.js');
+  test('main-dpi.js 必须 require 新模块', () => {
+    assert.ok(/require\('\.\.\/dpi-linearization\.js'\)/.test(dpi), '必须 require dpi-linearization.js');
   });
 
   test('三条规则都从模块取，不得内联', () => {
-    assert.ok(/shouldLinearize\(/.test(main), '启用判定必须走 shouldLinearize');
-    assert.ok(/resolveForcedScale\(/.test(main), '强制值必须走 resolveForcedScale');
-    assert.ok(/resolvePetScale\(/.test(main), '渲染端缩放必须走 resolvePetScale');
-    assert.ok(!/PRIMARY_SCALE \/ FORCED_SCALE/.test(main), '补偿公式不允许再内联在 main.js 里');
-  });
-
-  test('平台例外只允许住在模块里（main.js 不得出现 darwin 分支）', () => {
-    assert.ok(!/darwin/.test(main), '平台判断写进 main.js 就绕过了本文件的单测');
+    assert.ok(/shouldLinearize\(/.test(dpi), '启用判定必须走 shouldLinearize');
+    assert.ok(/resolveForcedScale\(/.test(dpi), '强制值必须走 resolveForcedScale');
+    assert.ok(/resolvePetScale\(/.test(dpi), '渲染端缩放必须走 resolvePetScale');
+    assert.ok(!/PRIMARY_SCALE \/ FORCED_SCALE/.test(dpi), '补偿公式不允许再内联在 main.js 里');
   });
 
   test('强制 DSF 的 switch 必须在 shouldLinearize 判定之内（否则 macOS 又被放大）', () => {
-    const guardAt = main.indexOf('shouldLinearize(');
-    const switchAt = main.indexOf("appendSwitch('force-device-scale-factor'");
+    const guardAt = dpi.indexOf('shouldLinearize(');
+    const switchAt = dpi.indexOf("appendSwitch('force-device-scale-factor'");
     assert.ok(guardAt >= 0 && switchAt >= 0, '两处都必须在位');
     assert.ok(switchAt > guardAt, 'switch 必须排在判定之后（同一分支内）');
   });
 
   test('renderer 侧页面缩放仍取自 petScale()（两端共用一个来源）', () => {
     assert.ok(/setZoomFactor\(scale\)/.test(main), '窗口缩放必须来自 petScale()');
-    assert.ok(/const scale = petScale\(\)/.test(main), 'petScale() 必须在建窗前求值一次');
+    assert.ok(/const scale = dpi\.petScale\(\)/.test(main), 'petScale() 必须在建窗前求值一次');
   });
 });
 

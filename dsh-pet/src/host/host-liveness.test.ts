@@ -1,24 +1,16 @@
 /**
  * issue #56 的判定测试 —— 「宿主退出后 Electron helper 因 stdout EPIPE 崩溃弹窗 / 赖着不走」。
  *
- * 事实链（真机 + 源码都已核对）：
- *   ① helper 的 stdout/stderr 是宿主给的管道（helper-process.ts: stdio ['pipe','pipe','pipe']）；
- *   ② 宿主一退出，管道读端消失；helper 下一次写（bridge 协议行，渲染端每秒至少一条 /broadcast
- *      轮询）拿到 EPIPE —— Windows 真机实测：`EPIPE: broken pipe, write`，栈在 Socket._write；
- *   ③ 未处理的 'error' 事件 = 未捕获异常；Electron 主进程自带的处理器只弹一个模态框、**且不退出**
- *      （lib/browser/init.ts：Don't quit on fatal error）→ 桌宠卡死、进程赖着不走；
- *   ④ Windows 上 Node/libuv 的 job 对象（JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE）会在宿主退出时顺手
- *      杀掉子进程，所以那一幕在 Windows 上看不全；macOS 没这层兜底，就是报告里的样子。
+ * 事实链：helper 的 stdout/stderr 是宿主给的管道，宿主一退出读端消失，下一次写（bridge 协议行）拿到
+ * EPIPE（Windows 实测 `EPIPE: broken pipe, write`）；未处理的 'error' 事件 = 未捕获异常，Electron
+ * 主进程只弹模态框、不退出；Windows 的 job 对象（KILL_ON_JOB_CLOSE）会在宿主退出时顺手杀掉子进程，
+ * 所以那一幕在 Windows 上看不全，macOS 没有这层兜底。
  *
- * 本文件钉三件事：
- *   ① 纯判定规则（"宿主没了"只认 ESRCH；管道断开只认 EPIPE / ERR_STREAM_DESTROYED）；
- *   ② main.js 的接线：两条路（管道守卫 + 宿主探测）都在位、都只经唯一出口、且守卫早于任何一次写；
- *   ③ 宿主侧确实把 pid 注进去了（helper-process.ts 的 spawn 与开发流 start-desktop.mjs），
- *      以及新文件在发布必需清单里（缺了 main.js 启动即崩）。
+ * 本文件钉三件事：① 纯判定规则（宿主没了只认 ESRCH；管道断开只认 EPIPE / ERR_STREAM_DESTROYED）；
+ * ② main.js 的接线：管道守卫 + 宿主探测都在位、都只经唯一出口、且守卫早于任何一次写；
+ * ③ 宿主侧确实把 pid 注进去了，且新文件在发布必需清单里（缺了 main.js 启动即崩）。
  *
- * helper 是随包发行的手写 JS，而开发机上跑不起 Electron（受限环境里 Chromium 建不了自己的 Mojo
- * 命名管道），所以接线只能靠源码断言 + 纯函数测试。
- *
+ * helper 是随包发行的手写 JS，开发机上跑不起 Electron，接线只能靠源码断言 + 纯函数测试；
  * 用 Node 内置 test runner（node:test），不引入任何 npm 依赖。
  */
 import { test, describe } from 'node:test';
@@ -154,11 +146,12 @@ describe('守卫：main.js 的两条路必须都在位（helper 随包发行，�
     assert.ok(/HOST_POLL_MS/.test(main), '间隔必须是命名常量（来自 host-liveness.js）');
   });
 
-  test('守卫必须早于**任何一次写**（probePrimaryScale 失败就会往 stderr 写）', () => {
+  test('守卫必须早于**任何一次写**（DPI 探测失败就会往 stderr 写）', () => {
     const guardAt = main.indexOf("stream.on('error'");
-    const firstWriteAt = main.indexOf('PRIMARY_SCALE = readCachedPrimaryScale() || probePrimaryScale();');
+    // DPI 探测已拆到 main-dpi.js：main.js 这边第一个可能写 stderr 的动作就是建它
+    const firstWriteAt = main.indexOf('createDpi({');
     assert.ok(guardAt > 0, '找不到管道守卫');
-    assert.ok(firstWriteAt > 0, '找不到 DPI 探测调用点（文件结构变了，请同步本断言）');
+    assert.ok(firstWriteAt > 0, '找不到 DPI 工厂调用点（文件结构变了，请同步本断言）');
     assert.ok(guardAt < firstWriteAt, '管道守卫必须装在任何一次可能写之前');
   });
 
@@ -171,8 +164,8 @@ describe('守卫：main.js 的两条路必须都在位（helper 随包发行，�
 });
 
 describe('守卫：宿主侧必须把 pid 注入（否则 B 永远不生效）', () => {
-  test('helper-process.ts：唯一的 spawn 点经 helperSpawnEnv 注入 DSH_PET_HOST_PID', () => {
-    const src = readSource('./helper-process.ts');
+  test('helper/child.ts：唯一的 spawn 点经 helperSpawnEnv 注入 DSH_PET_HOST_PID', () => {
+    const src = readSource('./helper/child.ts');
     assert.ok(
       /env: helperSpawnEnv\(process\.pid, this\.options\.env\)/.test(src),
       'spawn 的 env 必须经 helperSpawnEnv 注入宿主 pid（放在唯一 spawn 点，所有调用方自动获得）',
@@ -180,7 +173,7 @@ describe('守卫：宿主侧必须把 pid 注入（否则 B 永远不生效）',
   });
 
   test('helperSpawnEnv：删掉会劫持 Electron 启动模式的 ELECTRON_RUN_AS_NODE（issue #63）', () => {
-    const src = readSource('./helper-process.ts');
+    const src = readSource('./helper/child.ts');
     assert.ok(
       /delete env\.ELECTRON_RUN_AS_NODE;/.test(src),
       '必须**删键**：宿主（如 DSH Desktop）透传这个变量会让 helper 退化成纯 Node 模式、require("electron") 直接崩',

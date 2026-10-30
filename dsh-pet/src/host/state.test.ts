@@ -1,10 +1,10 @@
 /**
  * 轮询统一状态存储（S）单元测试 —— 钉住整个设计的地基：counter 语义。
  *
- * 为什么单独钉这个：前端**只**靠"counter 变了"决定要不要渲染。
+ * 为什么单独钉这个：前端只靠"counter 变了"决定要不要渲染。
  *   - counter 漏更新 → 写了数据前端也不刷新（静默失效，最难查）；
  *   - counter 用自增（0,1,2…）→ 宿主重启归零，而前端手里还存着旧值，对比永久失效
- *     （改造前的 /notify 就是这个毛病：重启后 seq 归零，`seq <= 旧值` 恒成立 → 通知再也不弹）；
+ *     （/notify 若用自增就会这样：重启后 seq 归零，`seq <= 旧值` 恒成立 → 通知再也不弹）；
  *   - counter 用 Date.now() 但同一毫秒连写两次 → 第二次被当成"没变化"吞掉。
  * 本文件把这三条都钉死。
  *
@@ -16,7 +16,7 @@ import assert from 'node:assert/strict';
 import { MAX_STATE_WAIT_MS, parseStateWaitQuery, PollStateStore } from './state.ts';
 
 describe('PollStateStore —— 初始形态', () => {
-  test('四个全局叶子都是 {counter:0, data:null}（0 = 从未写过，前端首拉当基线）', () => {
+  test('五个全局叶子都是 {counter:0, data:null}（0 = 从未写过，前端首拉当基线）', () => {
     const s = new PollStateStore().read();
     assert.deepEqual(Object.keys(s.sections).sort(), ['balance', 'config', 'menu', 'notify', 'workStatus']);
     for (const leaf of Object.values(s.sections)) assert.deepEqual(leaf, { counter: 0, data: null });
@@ -82,8 +82,8 @@ describe('PollStateStore —— 写入与读取', () => {
     const store = new PollStateStore();
     store.writePet('main', 'position', { x: 0.5, y: 0.5, mode: 'spring' });
     const entry = store.read().pets.main;
-    // 形状恒定：只要被写过任意一个叶子，五个键就都存在（消费端不必判 undefined）
-    assert.deepEqual(Object.keys(entry).sort(), ['anim', 'lock', 'position', 'say', 'throw']);
+    // 形状恒定：只要被写过任意一个叶子，六个键就都存在（消费端不必判 undefined）
+    assert.deepEqual(Object.keys(entry).sort(), ['anim', 'lock', 'position', 'say', 'sleep', 'throw']);
     assert.deepEqual(entry.position.data, { x: 0.5, y: 0.5, mode: 'spring' });
     assert.deepEqual(entry.say, { counter: 0, data: null }, '没写过的槽位保持空叶子');
     assert.deepEqual(entry.anim, { counter: 0, data: null });
@@ -282,7 +282,7 @@ describe('PollStateStore.wait —— 挂起等待（长轮询）', () => {
     const c = collector();
     store.writeSection('balance', 1);
     store.wait({ since: store.read().counter, timeoutMs: 10_000, onWake: c.onWake });
-    // 再写一次**同一个值**也算写入（counter 变），所以这里必须真的写才会醒
+    // 再写一次同一个值也算写入（counter 变），所以这里必须真的写才会醒
     store.writeSection('balance', 1);
     assert.deepEqual(c.seen, [0], 'counter 变了就是变化，与 data 是否相同无关');
   });

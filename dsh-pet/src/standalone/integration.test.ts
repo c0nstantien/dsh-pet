@@ -1,10 +1,10 @@
 /**
- * 端到端契约：伪 ctx + **真实 apply** + 真实 `node:http` 服务。
+ * 端到端契约：伪 ctx + 真实 apply + 真实 `node:http` 服务。
  *
  * 这一层回答"独立模式到底有没有把插件自己的宿主半边跑起来"，并钉住三件事：
  *   1. `apply` 注册的路由前缀确实被独立服务接管 —— 只有一份路由表，没有第二套实现；
  *   2. 不依赖包内素材的端点与 DSH 内同形（`/state`、`/models`、`/config/meta` 的路径口径）；
- *   3. 路径安全与"配置不可达"的口径经**真实 HTTP** 仍然成立（独立服务不重写 URL、不吞异常）。
+ *   3. 路径安全与"配置不可达"的口径经真实 HTTP 仍然成立（独立服务不重写 URL、不吞异常）。
  *
  * 覆盖范围的限制与 `routes.test.ts` 相同：源码形态下包根解析成 `<pkg>/src`，
  * 包内 `assets/config.jsonc` 不可达 → `readAllConfig` 必抛。因此这里不断言"成品配置"，
@@ -15,7 +15,7 @@
  */
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -96,12 +96,38 @@ test('real plugin chat routes cannot bypass the standalone capability using enco
       assert.equal(response.status, 403);
       await response.text();
     }
-    // With a valid capability the encoded name reaches the real plugin's parameter validation.
+    // 带上有效凭证时，编码后的名字会走到真实插件的参数校验，最终报 pet-required。
     const response = await fetch(prefix + '%63hat', { headers: { 'X-DSH-Pet-Token': security.token } });
     assert.equal(response.status, 200);
     assert.equal(((await response.json()) as { reason: string }).reason, 'pet-required');
   } finally {
     await protectedServer.close();
+  }
+});
+
+test('config pet IDs: duplicate IDs return 200 + bad-request without creating a user file', async (t) => {
+  const file = configPathsFor(packageRoot, home).userFile;
+  assert.equal(existsSync(file), false);
+  t.after(() => rmSync(file, { force: true }));
+  const pet = {
+    id: 'main',
+    name: 'Blue',
+    size: 240,
+    balanceEnabled: false,
+    display: 'web',
+    position: { corner: 'top-right', marginX: 20, marginY: 20 },
+  };
+  for (const id of ['main', ' main ']) {
+    const response = await fetch(`${base}/dsh-pet-7340/config`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ pets: [pet, { ...pet, id, name: 'second' }] }),
+    });
+    assert.equal(response.status, 200);
+    const body = (await response.json()) as { reason: string; message: string };
+    assert.equal(body.reason, 'bad-request');
+    assert.match(body.message, /^invalid pet config:/);
+    assert.equal(existsSync(file), false);
   }
 });
 
@@ -147,12 +173,13 @@ describe('插件宿主半边在独立模式下跑起来了', () => {
 });
 
 describe('配置与素材不可达时的口径 —— 显式失败，不静默兜底', () => {
-  test('包内默认配置读不到（源码形态）→ /config 500 + 错误正文', async () => {
+  test('包内默认配置读不到（源码形态）→ /config 200 + generate-error 实体', async () => {
     const response = await get('/dsh-pet-7340/config');
-    assert.equal(response.status, 500, '读不到配置必须显式失败：静默返回空配置会让桌宠"看起来正常但什么都没有"');
-    const body = response.json() as { error?: string };
-    assert.equal(typeof body.error, 'string');
-    assert.ok((body.error ?? '').length > 0, '错误正文必须可读');
+    assert.equal(response.status, 200, '接口统一 200，失败放在实体里：静默返回空配置会让桌宠"看起来正常但什么都没有"');
+    const body = response.json() as { ok?: boolean; reason?: string; message?: string };
+    assert.equal(body.ok, false);
+    assert.equal(body.reason, 'generate-error');
+    assert.ok((body.message ?? '').length > 0, '错误正文必须可读');
   });
 
   test('thumb 的路由安全口径经真实 HTTP 仍然成立', async () => {
