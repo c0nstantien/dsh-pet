@@ -238,8 +238,10 @@ describe('buildSaveBody —— 请求体字段', () => {
       chatMemoryRounds: 5,
       chatImageLimit: 10,
       font: {},
+      animationWeights: { idle: 10, turn: 5, move: 5 },
     } as unknown as SaveFields;
     assert.deepEqual(Object.keys(buildSaveBody(fields)).sort(), [
+      'animationWeights',
       'chatAnimationEnabled',
       'chatImageEnabled',
       'chatImageLimit',
@@ -255,6 +257,7 @@ describe('buildSaveBody —— 请求体字段', () => {
       'voiceEnabled',
       'voiceName',
       'voiceTodoEnabled',
+      'voiceVolume',
       'voiceWhisperEnabled',
       'whisperImageEnabled',
       'whisperModel',

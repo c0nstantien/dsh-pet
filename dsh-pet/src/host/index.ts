@@ -21,6 +21,7 @@ import { createDownloadReport } from './plugin/download-report.ts';
 import { createWorkStatusBridge } from './plugin/work-status-bridge.ts';
 import { registerTodoReminders } from './plugin/todo-reminders.ts';
 import { createVoiceService } from './voice/speak.ts';
+import { createHearService } from './voice/hear.ts';
 import { TODO_FILE_NAME, TodoStore } from './todo/store.ts';
 import { join } from 'node:path';
 import type { PetRouteDeps } from './routes/types.ts';
@@ -41,13 +42,14 @@ export function apply(ctx: any): void {
     thumbUserRoot,
     memeDirsFor,
     standaloneAiPolicy,
+    standaloneAiBalance,
     state,
     playback,
     workStatus,
     EXTERNAL_WORK_SESSION,
     nextExternalWorkSeq,
   } = setup;
-  const workStatusBridge = createWorkStatusBridge({ state, workStatus });
+  const workStatusBridge = createWorkStatusBridge({ state, workStatus, EXTERNAL_WORK_SESSION });
   const { publishWorkStatus, stopWorkStatusFlush } = workStatusBridge;
   const downloadReport = createDownloadReport({
     EXTERNAL_WORK_SESSION,
@@ -74,7 +76,7 @@ export function apply(ctx: any): void {
   const chatMemory = createChatMemory({ ctx, configPaths, log, memeDirsFor, playback, state, userRoot });
   const { lastWhisperAt, publishWhisper, publishSleepTalk, chatWithPet, getActivePetId, setActivePetId } = chatMemory;
 
-  const balancePoll = createBalancePoll({ ctx, configPaths, getActivePetId, log, state });
+  const balancePoll = createBalancePoll({ ctx, configPaths, getActivePetId, log, state, standaloneAiBalance });
   const { effectivePetList, balancePeriodSec, whisperPeriodSec, refreshBalance, resolveActivePetId, petDisplayName } =
     balancePoll;
 
@@ -105,6 +107,8 @@ export function apply(ctx: any): void {
     todos,
     // 语音合成：缓存落 userRoot，失败只留日志，不打断宿主
     voice: createVoiceService({ userRoot, log }),
+    // 语音识别：能力来自宿主（DSH 的 speechToText），没启用时服务自己在调用时回 unsupported
+    speech: createHearService({ speechToText: () => setup.optionalService('speechToText') }),
   };
   const httpRoute = createHttpRoute(deps);
   registerHttpRoute(ctx, httpRoute.handlePetRoute);

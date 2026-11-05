@@ -773,6 +773,56 @@ describe('saveUserConfig —— 实例级人设 whisperPrompt（白名单 + 清�
   });
 });
 
+describe('配置合并与保存 —— sizePercent（合法才落键，缺省按默认 20 消费）', () => {
+  const petAt = (merged: Record<string, Record<string, unknown>>): Record<string, unknown> =>
+    (merged.main.pets as Record<string, unknown>[])[0];
+
+  test('实例写了合法百分比 → 原样带出', () => {
+    const pet = petAt(readAllConfig(withBase({}, { pets: [{ ...BASE.pets[0], sizePercent: 40 }] })));
+    assert.equal(pet.sizePercent, 40);
+  });
+
+  test('没写 → 不落键（渲染侧按默认 20，文件不长多余的键；无用户层时形状也一致）', () => {
+    assert.equal('sizePercent' in petAt(readAllConfig(withBase({}))), false);
+  });
+
+  test('非数字或小于 1 → 不落键并告警，不抛错', () => {
+    for (const value of [0, -5, '40', null, { a: 1 }, true]) {
+      const pet = petAt(readAllConfig(withBase({}, { pets: [{ ...BASE.pets[0], sizePercent: value }] })));
+      assert.equal('sizePercent' in pet, false, `${JSON.stringify(value)} 应被忽略`);
+    }
+  });
+
+  test('边界值与超过 100 都合法（不设上限）', () => {
+    for (const value of [1, 100, 150]) {
+      const pet = petAt(readAllConfig(withBase({}, { pets: [{ ...BASE.pets[0], sizePercent: value }] })));
+      assert.equal(pet.sizePercent, value);
+    }
+  });
+
+  test('saveUserConfig：合法百分比落盘（不在白名单就会被保存悄悄丢掉）', () => {
+    const out = saveOnce({ pets: [{ ...PETS[0], sizePercent: 40 }] });
+    assert.equal((out?.pets as Record<string, unknown>[])[0].sizePercent, 40);
+  });
+
+  test('saveUserConfig：未传 → 不凭空造字段', () => {
+    const out = saveOnce({ pets: PETS });
+    assert.equal('sizePercent' in (out?.pets as Record<string, unknown>[])[0], false);
+  });
+
+  test('saveUserConfig：传了非法值 → 整体拒绝（宿主回 400，不静默丢输入）', () => {
+    for (const value of [0, -1, '40']) {
+      assert.equal(saveOnce({ pets: [{ ...PETS[0], sizePercent: value }] }), null, `${JSON.stringify(value)} 应被拒绝`);
+    }
+  });
+
+  test('合并结果直接喂回 save：百分比往返不丢', () => {
+    const merged = readAllConfig(withBase({}, { pets: [{ ...BASE.pets[0], sizePercent: 40 }] }));
+    const layerPets = merged.main.pets as Record<string, unknown>[];
+    assert.equal((saveOnce({ pets: layerPets })?.pets as Record<string, unknown>[])[0].sizePercent, 40);
+  });
+});
+
 describe('saveUserConfig —— 物理参数 physics（白名单 + 透传保留）', () => {
   const PHYS: Record<string, unknown> = BASE.physics;
 
@@ -790,6 +840,27 @@ describe('saveUserConfig —— 物理参数 physics（白名单 + 透传保留�
   test('请求体覆盖磁盘旧值（与四个全局开关同一语义）', () => {
     const out = saveOnce({ pets: PETS, physics: { ...PHYS, throwPower: 2 } }, { pets: PETS, physics: PHYS });
     assert.equal((out?.physics as Record<string, unknown>).throwPower, 2);
+  });
+
+  test('hapticEnabled：缺键合法（旧配置按默认开），非布尔整段拒绝', () => {
+    const missing: Record<string, unknown> = { ...PHYS };
+    delete missing.hapticEnabled;
+    const kept = saveOnce({ pets: PETS, physics: missing });
+    assert.ok(kept, '缺键不该被整段拒绝');
+    assert.equal('hapticEnabled' in (kept?.physics as Record<string, unknown>), false, '没写就不凭空补键');
+    assert.ok(saveOnce({ pets: PETS, physics: { ...PHYS, hapticEnabled: false } }), '显式关了要能落盘');
+    assert.equal(saveOnce({ pets: PETS, physics: { ...PHYS, hapticEnabled: 'yes' } }), null);
+  });
+
+  test('tiltGravity / shakeThrow：缺键合法（走默认），非布尔整段拒绝', () => {
+    const missing: Record<string, unknown> = { ...PHYS };
+    delete missing.tiltGravity;
+    delete missing.shakeThrow;
+    assert.ok(saveOnce({ pets: PETS, physics: missing }), '缺键不该被整段拒绝');
+    assert.ok(saveOnce({ pets: PETS, physics: { ...PHYS, tiltGravity: true } }), '单独开倾斜要能落盘');
+    assert.ok(saveOnce({ pets: PETS, physics: { ...PHYS, shakeThrow: true } }), '单独开摇一摇要能落盘');
+    assert.equal(saveOnce({ pets: PETS, physics: { ...PHYS, tiltGravity: 'on' } }), null);
+    assert.equal(saveOnce({ pets: PETS, physics: { ...PHYS, shakeThrow: 1 } }), null);
   });
 
   test('非法值 → 整体拒绝（宿主回 400；与读取侧 physicsValid 同一套规则）', () => {
@@ -810,6 +881,31 @@ describe('saveUserConfig —— 物理参数 physics（白名单 + 透传保留�
     for (const [name, value] of bad) {
       assert.equal(saveOnce({ pets: PETS, physics: value }), null, `${name} 必须被拒绝`);
     }
+  });
+});
+
+describe('saveUserConfig —— 动作频率 animationWeights（白名单 + 透传保留）', () => {
+  const WEIGHTS = { idle: 30, turn: 5, move: 5 };
+
+  test('整段随请求体写入（设置页「动作频率」卡）', () => {
+    const out = saveOnce({ pets: PETS, animationWeights: WEIGHTS });
+    assert.deepEqual(out?.animationWeights, WEIGHTS, 'animationWeights 必须按请求体整段写入');
+  });
+
+  test('未传时透传磁盘旧值；磁盘上也没有则不凭空造字段', () => {
+    const kept = saveOnce({ pets: PETS }, { pets: PETS, animationWeights: WEIGHTS });
+    assert.deepEqual(kept?.animationWeights, WEIGHTS, '未传时必须原样保留磁盘上的手改值');
+    assert.equal('animationWeights' in (saveOnce({ pets: PETS }) ?? {}), false, '磁盘上也没有时不得凭空写入');
+  });
+
+  test('数值归一化：字符串也按数字落盘', () => {
+    const out = saveOnce({ pets: PETS, animationWeights: { idle: '30', turn: 5, move: 5 } });
+    assert.deepEqual(out?.animationWeights, WEIGHTS);
+  });
+
+  test('非法值 → 整体拒绝（负数与非对象是脏值）', () => {
+    assert.equal(saveOnce({ pets: PETS, animationWeights: { idle: -1, turn: 5, move: 5 } }), null);
+    assert.equal(saveOnce({ pets: PETS, animationWeights: '30' }), null);
   });
 });
 
@@ -1134,9 +1230,9 @@ describe('syncUserConfigFromDefault —— 同步（内置默认原文写入用�
 /**
  * 文件宠物条目的基座 —— 「全局默认 + 种类可覆盖」。
  *
- * 判据：GLOBAL_DEFAULT_KEYS 列出的字段（physics / confineToScreen / 两个配图开关 /
- * 对话动作联动开关 / chatImageLimit / chatMemoryRounds / whisperModel / chatModel /
- * eventsRefreshSec 等）是用户级「成本 / 偏好 /
+ * 判据：GLOBAL_DEFAULT_KEYS 列出的字段（physics / animationWeights / confineToScreen /
+ * 两个配图开关 / 对话动作联动开关 / chatImageLimit / chatMemoryRounds / whisperModel /
+ * chatModel / eventsRefreshSec 等）是用户级「成本 / 偏好 /
  * 环境 / 节奏」参数，用户层写了就对所有条目生效（含 pet pack）；种类文件自己写了就覆盖
  * 自己那份。其余顶层字段（人设 / 表情包 / 动画池 / 文案）的基座仍是内置默认——
  * 一个种类一份人设、一份池、一个表情包目录，各写一份才是 pet pack 的意义。
@@ -1195,10 +1291,11 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     }
   }
 
-  test('用户层写了这 10 个字段 → 种类条目逐个继承（不再只吃内置默认）', () => {
+  test('用户层写了这些字段 → 种类条目逐个继承（不再只吃内置默认）', () => {
     const out = merged({
       overlay: {
         physics: { ...(BASE_FULL.physics as Record<string, unknown>), petCollision: true, gravity: 999 },
+        animationWeights: { idle: 40, turn: 2, move: 3 },
         confineToScreen: true,
         whisperImageEnabled: false,
         chatImageEnabled: false,
@@ -1214,6 +1311,7 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     const pig = out.pig;
     assert.equal(rec(pig.physics).petCollision, true, 'physics 应继承用户层');
     assert.equal(rec(pig.physics).gravity, 999);
+    assert.deepEqual(pig.animationWeights, { idle: 40, turn: 2, move: 3 }, 'animationWeights 应继承用户层');
     assert.equal(pig.confineToScreen, true);
     assert.equal(pig.whisperImageEnabled, false);
     assert.equal(pig.chatImageEnabled, false);
@@ -1225,6 +1323,7 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     assert.deepEqual(pig.eventsRefreshSec, { balance: 900, whisper: 60 });
     // 对照：main 条目一直就是用户层（行为不变）
     assert.equal(rec(out.main.physics).gravity, 999);
+    assert.deepEqual(out.main.animationWeights, { idle: 40, turn: 2, move: 3 });
     assert.equal(out.main.chatMemoryRounds, 9);
   });
 
@@ -1239,6 +1338,7 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
       pack: {
         ...PACK,
         physics: { ...(BASE_FULL.physics as Record<string, unknown>), gravity: 111 },
+        animationWeights: { idle: 5, turn: 5, move: 5 },
         chatMemoryRounds: 2,
         chatImageLimit: 6,
         whisperImageEnabled: true,
@@ -1246,6 +1346,7 @@ describe('文件宠物条目 —— 全局默认（用户层作基座）+ 种类
     });
     const pig = out.pig;
     assert.equal(rec(pig.physics).gravity, 111, '种类自己写了 physics → 用自己那份');
+    assert.deepEqual(pig.animationWeights, { idle: 5, turn: 5, move: 5 }, '种类自己写了 animationWeights → 用自己那份');
     assert.equal(pig.chatMemoryRounds, 2, '种类自己写了 chatMemoryRounds → 用自己那份');
     assert.equal(pig.chatImageLimit, 6, '种类自己写了 chatImageLimit → 用自己那份');
     assert.equal(pig.whisperImageEnabled, true, '种类自己写了开关 → 用自己那份');

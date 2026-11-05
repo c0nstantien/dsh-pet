@@ -66,6 +66,13 @@ describe('diffPackWrites —— 编辑列表 → 要写回的种类层', () => {
     );
   });
 
+  test('只改 sizePercent 也算改动（指纹必须覆盖它，否则改百分比会静默不落盘）', () => {
+    const current = [pet('m1', { assetRoot: 'main' }), pet('g1', { assetRoot: 'glm', sizePercent: 40 })];
+    const plan = diffPackWrites(loaded(), current);
+    assert.equal(plan.length, 1);
+    assert.equal(plan[0].pets[0].sizePercent, 40);
+  });
+
   test('只是调换实例顺序也算改动', () => {
     const before = loaded();
     before[1].pets.push(pet('g2', { assetRoot: 'glm' }));

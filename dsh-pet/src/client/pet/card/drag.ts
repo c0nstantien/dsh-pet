@@ -15,6 +15,8 @@ import type * as ReactNS from 'react';
 
 /** 注入的 react 能力。 */
 export interface CardDragRuntime {
+  /** 副作用；卸载时摘掉驱动的鼠标松开兜底监听。 */
+  useEffect: (effect: ReactNS.EffectCallback, deps?: ReactNS.DependencyList) => void;
   /** 引用；拖拽驱动只造一次。 */
   useRef: <T>(initial: T) => ReactNS.MutableRefObject<T>;
 }
@@ -31,8 +33,6 @@ export interface CardDragInput {
   motion: CardMotion;
   /** 宠物根节点。 */
   root: () => HTMLDivElement | null;
-  /** 舞台节点：提示与命中的定位基准。 */
-  stage: () => HTMLDivElement | null;
   /** 等新首帧就位后再压 Q 弹。 */
   pendingSquash: ReactNS.MutableRefObject<boolean>;
   /** 归一化中心写入口。 */
@@ -43,8 +43,6 @@ export interface CardDragInput {
   setAnim: (anim: string) => void;
   /** 递增换源序号，强制重播。 */
   bumpSeq: () => void;
-  /** 拖拽态。 */
-  setDragging: (on: boolean) => void;
   /** 悬浮提示显隐。 */
   setTipOn: (on: boolean) => void;
 }
@@ -56,11 +54,11 @@ export interface CardDragInput {
  * @returns 接收装配输入的 hook，返回本卡的拖拽驱动。
  */
 export function createCardDrag(rt: CardDragRuntime) {
-  const { useRef } = rt;
+  const { useRef, useEffect } = rt;
 
   return function useCardDrag(input: CardDragInput): Drag {
-    const { bumpSeq, card, cfgRef, live, motion, pendingSquash, root, setAnim, setCustomPos, setDragging } = input;
-    const { setOnce, setTipOn, stage } = input;
+    const { bumpSeq, card, cfgRef, live, motion, pendingSquash, root, setAnim, setCustomPos } = input;
+    const { setOnce, setTipOn } = input;
 
     // 拖拽驱动每次事件取的当帧能力：逐渲染重建，驱动长期持有这个 getter。
     const dragCard = (): DragCard => {
@@ -70,7 +68,6 @@ export function createCardDrag(rt: CardDragRuntime) {
         size: metrics.size,
         halfW: metrics.halfW,
         halfH: metrics.halfH,
-        bottomPad: metrics.bottomPad,
         physics: cfgRef.current.physics,
         // 睡着时不给拖拽动画：可以拖、位置跟手，但保持睡姿（空池 = 驱动退化为只拖不换源）
         dragAnims: (live.current.flow?.sleeping() ?? false) ? [] : cfgRef.current.animations.drag,
@@ -84,7 +81,6 @@ export function createCardDrag(rt: CardDragRuntime) {
         markSquash: () => {
           pendingSquash.current = true;
         },
-        setDragging,
         resumeWork: () => live.current.flow?.resumeWorkStatusAnim() ?? false,
         stopAutonomy: () => motion.stopMove(),
         stopFlight: () => motion.flight.stop(),
@@ -96,7 +92,6 @@ export function createCardDrag(rt: CardDragRuntime) {
         tipOn: () => live.current.tipOn(),
         placeTip: (x, y) => live.current.placeTip(x, y),
         setTipOn,
-        stage,
         root,
         box: () => motion.box(),
         setBox: (box) => motion.setBox(box),
@@ -122,6 +117,8 @@ export function createCardDrag(rt: CardDragRuntime) {
     const dragRef = useRef<Drag | null>(null);
     dragRef.current ??= createDrag(dragCard);
     const drag = dragRef.current;
+    // 卸载即摘掉 window 上的鼠标松开兜底：驱动活得比卡片久，不摘会打到已卸掉的节点。
+    useEffect(() => () => drag.dispose(), [drag]);
     live.current.drag = drag;
     return drag;
   };

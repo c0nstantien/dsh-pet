@@ -6,7 +6,13 @@
  * @module dsh-pet/src/client/pet/card/bubble-slots
  */
 import { balancePageCount as balancePageCountOf, type BalanceState } from '../../../shared/balance/index.ts';
-import { subscribeVoiceState, type VoiceState } from '../../../shared/voice.ts';
+import {
+  BUBBLE_HOLD_IDLE,
+  reduceBubbleHold,
+  type BubbleHoldEvent,
+  type BubbleHoldState,
+} from '../../../shared/bubble-hold.ts';
+import { subscribeVoiceState, subscribeVoiceUtterance, type VoiceState } from '../../../shared/voice.ts';
 import { BUBBLE_DURATION_MS } from '../timings.ts';
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import type * as ReactNS from 'react';
@@ -86,6 +92,8 @@ export type WhisperBubbleComponent = (props: {
   url?: string;
   assetRoot?: string;
   on: boolean;
+  /** 可点时的回调；工作气泡用它跳会话，缺省即不可点。 */
+  onClick?: (e: ReactNS.MouseEvent<HTMLDivElement>) => void;
 }) => ReactNode;
 
 /** 注入的 react 能力。 */
@@ -125,6 +133,10 @@ export interface BubbleSlotsInput {
   workStatusEnabled: boolean;
   /** 工作状态是否处于终态。 */
   workTerminal: boolean;
+  /** 当前展示条目所属会话；有值才把工作气泡做成可点。 */
+  workSessionId?: string | null;
+  /** 点工作气泡时跳过去；缺省即不可点（网页端直接切，桌面端由容器转发）。 */
+  onFocusSession?: (sessionId: string) => void;
   /** 说话气泡配图的素材根。 */
   assetRoot?: string;
 }
@@ -175,11 +187,14 @@ export function createBubbleSlots(rt: BubbleSlotsRuntime, components: BubbleComp
     const [balanceOn, setBalanceOn] = useState(false);
     const [balancePage, setBalancePage] = useState(0);
     const balanceTimerRef = useRef<number | null>(null);
-    // 说话气泡：显隐、文本与配图（池内名与完整地址二选一）。
+    // 说话气泡：显隐、文本与配图（池内名与完整地址二选一）。收起时机在 bubbleHoldRef：
+    // 语音合成期间挂起计时，播完再留一小段尾巴（见 shared/bubble-hold）。
     const [whisperOn, setWhisperOn] = useState(false);
     const [whisperText, setWhisperText] = useState<string | null>(null);
     const [whisperImage, setWhisperImage] = useState<string | undefined>(undefined);
     const [whisperUrl, setWhisperUrl] = useState<string | undefined>(undefined);
+    const whisperHoldRef = useRef<BubbleHoldState>(BUBBLE_HOLD_IDLE);
+    const whisperTextRef = useRef<string | null>(null);
     const whisperTimerRef = useRef<number | null>(null);
     // 待办面板：独占槽位，没有停留计时，显隐只由用户开关。
     const [todoOn, setTodoOn] = useState(false);
@@ -222,22 +237,47 @@ export function createBubbleSlots(rt: BubbleSlotsRuntime, components: BubbleComp
       armBalanceTimeout();
     };
 
+    /** 推进说话气泡的收起计划，并按新计划重排计时器。 */
+    const applyWhisperHold = (event: BubbleHoldEvent): void => {
+      const next = reduceBubbleHold(whisperHoldRef.current, event);
+      if (next === whisperHoldRef.current) return; // 同引用 = 无事发生，别白白重排计时器
+      whisperHoldRef.current = next;
+      setWhisperOn(next.on);
+      if (whisperTimerRef.current !== null) window.clearTimeout(whisperTimerRef.current);
+      whisperTimerRef.current = null;
+      if (next.delayMs === null) return;
+      whisperTimerRef.current = window.setTimeout(() => {
+        whisperTimerRef.current = null;
+        applyWhisperHold({ kind: 'hide' });
+      }, next.delayMs);
+    };
+
+    // 语音报开始/结束时推进收起计划：合成慢的时候气泡得挂住，播完再收。
+    // 只认文本相同的那一句——同一页面上的其他宠物共用这份模块单例状态。
+    useEffect(
+      () =>
+        subscribeVoiceUtterance((event) => {
+          if (event.text !== whisperTextRef.current) return;
+          applyWhisperHold({ kind: event.kind === 'start' ? 'hold' : 'release', seq: event.seq });
+        }),
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- 订阅只建一次：收起计划全部经 ref 现读，重订阅只会漏事件
+      [],
+    );
+
     const showWhisper = (text: string, parts: { image?: string; url?: string }, duration?: number) => {
       if (duration === 0) return; // 只联动动画、不改气泡时走这里。
       setWhisperText(text);
+      whisperTextRef.current = text;
       setWhisperImage(parts.image);
       setWhisperUrl(parts.url);
-      setWhisperOn(true);
-      if (whisperTimerRef.current !== null) window.clearTimeout(whisperTimerRef.current);
-      whisperTimerRef.current = window.setTimeout(() => setWhisperOn(false), duration ?? BUBBLE_DURATION_MS);
+      applyWhisperHold({ durationMs: duration ?? BUBBLE_DURATION_MS, kind: 'show' });
     };
 
     const clearWhisper = () => {
-      if (whisperTimerRef.current !== null) window.clearTimeout(whisperTimerRef.current);
-      whisperTimerRef.current = null;
-      setWhisperOn(false);
+      whisperTextRef.current = null;
       setWhisperText(null);
       setWhisperImage(undefined);
+      applyWhisperHold({ kind: 'clear' });
     };
 
     const lightWork = (terminal: boolean) => {
@@ -296,7 +336,16 @@ export function createBubbleSlots(rt: BubbleSlotsRuntime, components: BubbleComp
       }
       // 终态与非终态共用同一个组件，差别只在停留时长与优先级。
       if (slot === 'work' || slot === 'work-terminal') {
-        return workText === null ? null : h(WhisperBubble, { text: workText, on: workOn });
+        if (workText === null) return null;
+        const sessionId = input.workSessionId ?? '';
+        const onFocus = input.onFocusSession;
+        // 拿不到会话就别做成可点：点下去没有任何去处，比不可点更糟。
+        const onClick = sessionId !== '' && onFocus !== undefined ? () => onFocus(sessionId) : undefined;
+        return h(WhisperBubble, {
+          text: workText,
+          on: workOn,
+          ...(onClick === undefined ? {} : { onClick }),
+        });
       }
       return null;
     };

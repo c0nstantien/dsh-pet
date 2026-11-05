@@ -8,6 +8,13 @@ export const pt: Record<Key, string> = {
   intro: 'Gerencie vários pets: cada um tem tamanho e posição próprios (aplicado na hora após salvar).',
   // 卡片标题与卡片级说明；说明统一进问号气泡。
   petCardTitle: 'Pet',
+  avatarLabel: 'Avatar',
+  avatarHint:
+    'A imagem pequena exibida ao lado das mensagens deste pet no painel de conversa. Sem envio, usa-se o logotipo padrão do plugin; o envio vale na hora e substitui o anterior, sem clicar em "Salvar".',
+  avatarUpload: 'Enviar avatar',
+  avatarChange: 'Trocar',
+  avatarUploading: 'Enviando…',
+  avatarUploaded: 'Avatar atualizado',
   petCardHint:
     'Ajustes por pet: nome / tamanho / exibição / posição / deslocamentos / os quatro interruptores. Clique em "Salvar" no fim para aplicar na hora.',
   globalTitle: 'Interruptores globais',
@@ -20,6 +27,27 @@ export const pt: Record<Key, string> = {
   'cmd.chat': 'Conversa',
   'cmd.pet': 'Pet',
   'cmd.balance': 'Saldo',
+  'shortcut.open': 'Abrir o chat do pet',
+  'shortcut.chat': 'Abrir a janela de chat',
+  'shortcut.hear': 'Entrada de voz',
+  'shortcut.capture': 'Captura de tela para o chat',
+  shortcutCardTitle: 'Atalhos',
+  shortcutCardHint: 'Ao expandir há dois grupos: atalhos do pet e atalhos globais.',
+  shortcutRowChat: 'Abrir chat',
+  shortcutRowHold: 'Segurar para falar',
+  shortcutRowHear: 'Entrada de voz',
+  shortcutRowCapture: 'Captura de tela',
+  shortcutRowPaste: 'Colar imagem',
+  shortcutRowTodo: 'Tarefas',
+  shortcutRowSleep: 'Dormir / acordar',
+  shortcutRowDisplay: 'Posição de exibição',
+  shortcutRowSidebar: 'Abrir chat lateral',
+  shortcutGroupPet: 'Atalhos do pet',
+  shortcutGroupPetHint:
+    'Na web basta passar o ponteiro sobre o pet. Na janela do desktop, clique no pet primeiro para ele receber o foco do teclado.',
+  shortcutGroupGlobal: 'Atalhos globais',
+  shortcutGroupGlobalHint:
+    'São distribuídos pelo DSH na web e na janela do desktop; mudam em Configurações → Geral → Atalhos.',
   petsLabel: 'Pets',
   add: 'Adicionar pet',
   remove: 'Remover',
@@ -31,6 +59,9 @@ export const pt: Record<Key, string> = {
   emptyPets: 'Nenhum pet ainda — clique em "Adicionar pet" para criar.',
   sizeLabel: 'Tamanho (largura px)',
   sizeHint: 'A altura é automática = largura × 9/16.',
+  sizePercentLabel: 'Largura máx. da tela (%)',
+  sizePercentHint:
+    'Quanto da largura da tela o pet pode ocupar: 100 = nunca mais largo que uma tela (igual ao px em janelas largas); 30–40 deixa bem menor no celular sem mudar o desktop. Calculado uma vez ao carregar; recarregue após redimensionar.',
   nameLabel: 'Nome',
   nameHint:
     'Nome exibido ao passar o mouse e incluído na persona da IA ("seu nome é X"). Pode repetir; vazio usa o id do pet.',
@@ -137,17 +168,24 @@ export const pt: Record<Key, string> = {
   voiceTodoEnabledHint:
     'Fala o lembrete quando uma tarefa vence (o balão continua aparecendo; isto só decide se fala). Dependente do interruptor mestre acima. Desligado por padrão.',
   voiceNameLabel: 'Voz',
+  voiceVolumeLabel: 'Volume',
+  voiceVolumeHint:
+    'Volume de reprodução em decimal 0–1: 1 é o volume máximo (100%) e 0 silencia. Altera apenas a intensidade e não sintetiza o áudio de novo, então ajustá-lo não custa nada extra. É independente do interruptor geral acima: com ele desligado, não tem efeito.',
   physicsTitle: 'Física (sensação de arrastar e arremessar)',
   physicsHint:
     'Padrão global, compartilhado por todos os pets (um pet pack pode sobrescrever no arquivo do próprio tipo); gravado na configuração do usuário ao "Salvar" (nunca na hora). No navegador vale na hora; no desktop vale quando o "Salvar" recarrega as janelas do pet.',
-  'physics.gravity': 'Gravidade (gravity)',
+  mobileTitle: 'Efeitos no celular',
+  mobileHint:
+    'Só fazem sentido no navegador do celular: a vibração precisa de motor, os dois interruptores de movimento precisam de sensores de inclinação/aceleração, e os sensores exigem HTTPS ou localhost.',
+  'physics.gravity': 'Gravidade',
   'physics.gravityHint': 'px/s² — quanto maior, mais rápido cai; 0 = sem gravidade (voa em linha reta para sempre)',
-  'physics.restitution': 'Restituição (restitution)',
+  'physics.restitution': 'Restituição',
   'physics.restitutionHint':
     '0–1, velocidade mantida ao quicar na parede ou no chão (1 = totalmente elástico, 0 = para na hora)',
-  'physics.groundFriction': 'Atrito com o chão (groundFriction)',
-  'physics.groundFrictionHint': 'por segundo, perda de velocidade horizontal após encostar no chão; 0 = piso de gelo',
-  'physics.throwPower': 'Força de arremesso (throwPower)',
+  'physics.groundFriction': 'Atrito de contato',
+  'physics.groundFrictionHint':
+    'por segundo, perda de velocidade ao longo de qualquer superfície (parede, chão, teto); 0 = gelo em todas',
+  'physics.throwPower': 'Força de arremesso',
   'physics.throwPowerHint':
     '> 0, multiplicador geral da mola que segue o cursor e da velocidade de saída (1 = padrão; maior = mais colado ao cursor e arremessos mais fortes)',
   physicsCeilingBounce: 'Quicar no teto',
@@ -155,6 +193,15 @@ export const pt: Record<Key, string> = {
     'Desligado, o arremesso pode sair pelo topo da tela (a gravidade ainda traz o pet de volta)',
   physicsPetCollision: 'Colisão entre pets',
   physicsPetCollisionHint: 'Um pet em voo quica nos outros com conservação de momento (massa ∝ tamanho²)',
+  physicsHaptic: 'Vibração ao colidir',
+  physicsHapticHint:
+    'Uma vibração por impacto (paredes, chão, teto, outros pets). Funciona no Chrome/Edge; não no iOS nem em navegadores WebView como o Via. O modo Não perturbe bloqueia o vibrador.',
+  physicsTilt: 'Gravidade por inclinação',
+  physicsTiltHint:
+    'Incline o celular e a gravidade acompanha (magnitude = o valor acima); com gravidade em 0 a inclinação não faz nada. Requer HTTPS/localhost.',
+  physicsShake: 'Sacudir para arremessar',
+  physicsShakeHint:
+    'Sacuda para arremessar o pet na direção do gesto; a força acompanha o throwPower. Independe da gravidade, então funciona com gravidade 0. Requer HTTPS/localhost.',
   invalidPhysics:
     'Revise os valores de física: gravidade / atrito com o chão ≥ 0, restituição 0–1, força de arremesso > 0.',
   fontTitle: 'Aparência e fonte',
@@ -178,7 +225,7 @@ export const pt: Record<Key, string> = {
   'font.simsun': 'SimSun',
   'font.comic': 'Comic Sans MS',
   'font.system': 'Padrão do sistema',
-  modelTitle: 'Modelos de IA e contexto da conversa',
+  modelTitle: 'Conversa e modelos',
   modelHint:
     'Qual modelo o sussurro e a conversa usam, e quanta história cada pedido de conversa carrega. "Seguir a conversa atual" usa o modelo da conversa em que você está (padrão). Padrão global: vale para todos os pets, e um pet pack pode sobrescrever no arquivo do próprio tipo. As opções vêm da mesma fonte do seletor de modelos do DSH, servidas pelo host em tempo real.',
   modelFollow: 'Seguir a conversa atual',
@@ -232,5 +279,12 @@ export const pt: Record<Key, string> = {
   uninstallStep2: '2. Remova o plugin em si (no terminal; isto também o tira da camada de bundle do profile):',
   uninstallStep3:
     '3. Apague os locais acima conforme a necessidade: caches não fazem falta; apagar "dados do usuário do plugin" perde a configuração e a memória da conversa (faça backup do main-config.jsonc antes, se quiser manter).',
+  motionTitle: 'Frequência de ações',
+  motionHint:
+    'Quatro campos: espera / giro / movimento são editáveis; a ação aleatória é calculada (100 − as outras três). Padrão global para todos os pets; um pet pack pode sobrescrevê-lo no arquivo do tipo.',
+  'motion.idle': 'Em espera',
+  'motion.turn': 'Giro',
+  'motion.move': 'Movimento',
+  'motion.action': 'Ação aleatória',
   uninstallCmd: 'dsh plugin --profile {profile} remove dsh-pet',
 };

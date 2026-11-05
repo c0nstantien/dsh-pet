@@ -9,6 +9,7 @@ import { pick } from '../../../shared/pickers.ts';
 import { postAction } from '../../../shared/state.ts';
 import { ROUTE_PATH } from '../../../shared/constants.ts';
 import { resolveFontPx } from '../../../shared/fonts.ts';
+import { resolvePetSizePx } from '../../../shared/pet-size.ts';
 import { makeBalanceBubble, makeWhisperBubble } from '../../bubble.ts';
 import { makeTodoBubble } from '../../todo-bubble.ts';
 import { petBridge } from '../../settings.ts';
@@ -56,21 +57,26 @@ export function createCardRuntime(rt: PetRuntime) {
   const useAnimationFlow = createAnimationFlow({ useRef });
   const useCardAnimation = createCardAnimation({ useEffect, useRef });
   const useCardMotion = createCardMotion({ useEffect, useRef });
-  const useCardDrag = createCardDrag({ useRef });
+  const useCardDrag = createCardDrag({ useRef, useEffect });
   const useCardEntry = createCardEntry({ useEffect, useRef });
 
   return function useCardRuntime(props: PetCardProps): CardViewProps {
     const { arena, balance, balanceManual, cfg, lock, lockTick, menuItemsRef, sleep, sleepTick, workStatus } = props;
+    const { onFocusSession } = props;
+
+    // 实际渲染宽度：百分比只在挂载与配置变更时按当次视口宽解析一次，拖窗口不跟随。
+    // 物理、字号与 CSS 变量都吃这一个值——两处各算一次会让命中框与视觉错位。
+    const effectiveSizePx = resolvePetSizePx(cfg.size, cfg.sizePercent, window.innerWidth);
 
     // 卡片状态容器：动画、朝向、拖拽态、提示与自定义位置；写入口在 card-state。
     const card = useCardState({
       anim: cfg.animations.idle[0] ?? '',
       corner: cfg.position.corner,
       margin: { x: cfg.position.marginX, y: cfg.position.marginY },
-      size: cfg.size,
+      size: effectiveSizePx,
     });
     const { actions, state } = card;
-    const { corner, customPos, dragging, facing, margin, size, tipOn } = state;
+    const { corner, customPos, facing, margin, size, tipOn } = state;
 
     // 驱动实例与跨关注点入口：创建顺序见模块头，填充只在本函数内。
     const liveRef = useRef<CardLive>({} as CardLive);
@@ -102,9 +108,9 @@ export function createCardRuntime(rt: PetRuntime) {
 
     // 配置变化即时跟随，容器重新合并或设置页保存后触发。
     useEffect(() => {
-      actions.setSize(cfg.size);
-      // eslint-disable-next-line react-hooks/exhaustive-deps -- setter 稳定，变化原因只有配置尺寸
-    }, [cfg.size]);
+      actions.setSize(resolvePetSizePx(cfg.size, cfg.sizePercent, window.innerWidth));
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- setter 稳定，变化原因只有配置的两个尺寸字段
+    }, [cfg.size, cfg.sizePercent]);
 
     useEffect(() => {
       actions.setCorner(cfg.position.corner);
@@ -123,6 +129,8 @@ export function createCardRuntime(rt: PetRuntime) {
       balanceManual,
       workStatusEnabled: cfg.workStatusEnabled,
       workTerminal: workStatus?.state === 'success' || workStatus?.state === 'error',
+      workSessionId: workStatus?.sessionId ?? null,
+      ...(onFocusSession === undefined ? {} : { onFocusSession }),
     });
 
     const ownAnim = useCardAnimation({
@@ -163,10 +171,8 @@ export function createCardRuntime(rt: PetRuntime) {
       root: () => rootRef.current,
       setAnim: actions.setAnim,
       setCustomPos: actions.setCustomPos,
-      setDragging: actions.setDragging,
       setOnce: actions.setOnce,
       setTipOn: actions.setTipOn,
-      stage: () => stageRef.current,
     });
 
     // 右键菜单、对话与悬浮提示：动作派发经 ref 转发，避免与 menu-actions 构造期成环。
@@ -273,7 +279,7 @@ export function createCardRuntime(rt: PetRuntime) {
       // eslint-disable-next-line react-hooks/exhaustive-deps -- 只按叶子变化次数触发，sleep 是当拍快照
     }, [sleepTick]);
 
-    const stageStyle = petStageStyle(dragging, bottomPad);
+    const stageStyle = petStageStyle(bottomPad);
     const rootStyle = petRootStyle(
       customPos,
       { width: window.innerWidth, height: window.innerHeight },

@@ -49,6 +49,14 @@ describe('validateForm —— 保存前校验', () => {
     );
   });
 
+  test('宠物：百分比缺省或是不小于 1 的数字才合法（不设上限）', () => {
+    assert.equal(validateForm(valid({ pets: [pet({ sizePercent: 0 })] })), 'invalid');
+    assert.equal(validateForm(valid({ pets: [pet({ sizePercent: 1 })] })), null);
+    assert.equal(validateForm(valid({ pets: [pet({ sizePercent: 100 })] })), null);
+    assert.equal(validateForm(valid({ pets: [pet({ sizePercent: 150 })] })), null, '超过 100 合法');
+    assert.equal(validateForm(valid({ pets: [pet()] })), null, '缺省 = 只用 px，合法');
+  });
+
   test('物理参数：区间与正负都按宿主规则卡住', () => {
     assert.equal(validateForm(valid({ physics: { ...DEFAULT_PHYSICS, gravity: -1 } })), 'invalidPhysics');
     assert.equal(validateForm(valid({ physics: { ...DEFAULT_PHYSICS, restitution: 1.5 } })), 'invalidPhysics');

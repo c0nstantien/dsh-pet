@@ -4,6 +4,7 @@
  * 只管「播哪一段、到哪一步」；播完判定由 animation-flow 转交本模块的 consumeEnded()，
  * 醒来后回随机链由调用方传入的 pickNext 决定。不依赖 React。
  * 不变量：进入必须先播 start（once）再切 loop（无限播）；入睡过渡里退出时不播 end。
+ * 循环段没有 ended——收到就说明前台已被别的动画顶掉，必须重新点名 loop，而不是重播前台。
  * @module dsh-pet/src/client/pet/card/sleep-machine
  */
 import type { SleepState } from '../../../shared/state.ts';
@@ -81,8 +82,9 @@ export function createSleepMachine(
         return true;
       }
       if (current.phase === 'loop') {
-        // loop 正常不会 ended；真收到了就重播，别掉回随机链
-        hub.card.actions.bumpSeq();
+        // 睡着期间前台可能被外来动画顶掉（显式点播、hostInstruction）：ended 落到这里说明现在
+        // 播的不是循环段。只重播前台会把顶进来的那段一次性动画续成死循环，必须重新点名循环段。
+        play(current.set.loop, false);
         return true;
       }
       // phase === 'end'：醒来过渡播完，交回随机链

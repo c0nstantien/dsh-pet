@@ -75,7 +75,10 @@ function createDpi({ app, screen, mainPath, linuxPointer, dpiProbe, dpiMark, for
     };
     let out = '';
     try {
-      out = execFileSync(process.execPath, [mainPath, '--dsh-pet-dpi-probe'], opts);
+      // 探测子进程必须和主进程用同一套开关：沙箱起不来的机器上宿主的自动回退会改用 --no-sandbox，
+      // 不带上的话探测子进程一启动就 0x80000003，主进程活着、缓存却永远写不出来，每次开机都要白探一次。
+      const sandboxArgs = app.commandLine.hasSwitch('no-sandbox') ? ['--no-sandbox'] : [];
+      out = execFileSync(process.execPath, [...sandboxArgs, mainPath, '--dsh-pet-dpi-probe'], opts);
     } catch (e) {
       // 只认 stdout，不认退出码：不开窗口的 Electron 进程调 app.exit() 在 Windows 上偶发
       // 0xC0000005（退出期访问违例），但那时值早就写出来了，丢掉它纯属浪费一次冷启动。
@@ -105,11 +108,22 @@ function createDpi({ app, screen, mainPath, linuxPointer, dpiProbe, dpiMark, for
   /** 实际生效的强制缩放（0 = 未启用，坐标系维持修复前的逐屏 DIP） */
   let FORCED_SCALE = 0;
   if (shouldLinearize({ platform: process.platform, dpiProbe, forceDsf })) {
-    PRIMARY_SCALE = readCachedPrimaryScale() || probePrimaryScale();
-    const forced = resolveForcedScale({ forceDsf, primaryScale: PRIMARY_SCALE });
-    if (forced > 0) {
-      app.commandLine.appendSwitch('force-device-scale-factor', String(forced));
-      FORCED_SCALE = forced;
+    // 探测失败只能退化为"不补偿"，不能把整个 helper 带走：受限令牌下
+    // getPath('userData') 与探测子进程都可能失败，进程会在 ready 之前直接结束且无日志。
+    try {
+      PRIMARY_SCALE = readCachedPrimaryScale() || probePrimaryScale();
+      const forced = resolveForcedScale({ forceDsf, primaryScale: PRIMARY_SCALE });
+      if (forced > 0) {
+        app.commandLine.appendSwitch('force-device-scale-factor', String(forced));
+        FORCED_SCALE = forced;
+      }
+    } catch (error) {
+      console.error(
+        '[dsh-pet-desktop-helper] dpi 探测失败，按不补偿继续:',
+        String(error && error.message ? error.message : error),
+      );
+      PRIMARY_SCALE = 0;
+      FORCED_SCALE = 0;
     }
   }
 

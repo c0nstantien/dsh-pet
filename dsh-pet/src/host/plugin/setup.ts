@@ -11,6 +11,7 @@ import { join } from 'node:path';
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths';
 import { listBalanceProviders, registerBalanceProvider } from '../balance/index.ts';
 import { listVoiceProviders, registerVoiceProvider } from '../voice/registry.ts';
+import { listSpeechProviders, registerSpeechProvider } from '../voice/speech-registry.ts';
 import { migrateUserConfig, type ConfigPaths } from '../config.ts';
 import { createFileLogger, isFileLogger, setDefaultLogger, type FileLogger, type LoggerLike } from '../log-file.ts';
 import { MenuRegistry } from '../menu.ts';
@@ -29,6 +30,14 @@ export interface HostSetupContext {
   effect(setup: () => (() => void) | void, label: string): void;
   /** 对外提供 Cordis 服务。 */
   provide(name: string, value: unknown): void;
+}
+
+/** 独立模式余额查询要用的服务商与密钥（由 standalone 的 standaloneAi 服务提供）。 */
+export interface StandaloneBalanceAuth {
+  /** 设置页选中的余额服务商 id；空串表示未选择。 */
+  provider: string;
+  /** 设置页保存的密钥；空串表示未保存。 */
+  apiKey: string;
 }
 
 /** 装配产物：apply 后续逻辑与路由层共用的对象。 */
@@ -53,6 +62,8 @@ export interface HostSetup {
   readonly optionalService: (name: string) => unknown;
   /** 独立模式的碎碎念授权策略 */
   readonly standaloneAiPolicy: () => StandaloneWhisperPolicy | undefined;
+  /** 独立模式的余额凭证；DSH 宿主里是 undefined → 余额走 currentSelection 与 credential store。 */
+  readonly standaloneAiBalance: () => StandaloneBalanceAuth | undefined;
   /** 轮询快照 */
   readonly state: PollStateStore;
   /** 第三方菜单注册表 */
@@ -123,6 +134,12 @@ export function createHostSetup(ctx: HostSetupContext): HostSetup {
   const standaloneAiPolicy = (): StandaloneWhisperPolicy | undefined =>
     optionalService('standaloneAi') as StandaloneWhisperPolicy | undefined;
 
+  /** 独立模式的余额凭证（可选能力）：DSH 宿主里是 undefined → 回落到模型服务商与 credential store。 */
+  const standaloneAiBalance = (): StandaloneBalanceAuth | undefined => {
+    const service = optionalService('standaloneAi') as { balanceAuth?: () => StandaloneBalanceAuth } | undefined;
+    return service?.balanceAuth?.();
+  };
+
   // 用户主配置（可编辑层）与文件宠物目录；配置读取/合并统一走 readAllConfig（./config）。
   // 主配置是 JSONC（main-config.jsonc）——与包内默认 config.jsonc 同名同格式：
   // 「同步」写进去的就是带注释的原文，扩展名如实反映内容（main-config.json 只读回落 + 启动迁移）
@@ -184,6 +201,11 @@ export function createHostSetup(ctx: HostSetupContext): HostSetup {
       register: registerVoiceProvider,
       list: listVoiceProviders,
     },
+    // 识别：与合成对称的一槽；注册后 /voice/hear 只走它，不再看宿主自带的 speechToText。
+    speech: {
+      register: registerSpeechProvider,
+      list: listSpeechProviders,
+    },
   });
 
   // 播放记录表（issue #122 第 3 项）：由渲染端上报驱动的状态机 + 等待者。
@@ -216,6 +238,7 @@ export function createHostSetup(ctx: HostSetupContext): HostSetup {
     memeDirsFor,
     optionalService,
     standaloneAiPolicy,
+    standaloneAiBalance,
     state,
     menuRegistry,
     playback,

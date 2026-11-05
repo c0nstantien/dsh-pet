@@ -41,7 +41,13 @@ export function makePetTabs(rt: Pick<SettingsRuntime, 'h' | 't'>): FunctionCompo
             type: 'button',
             onClick: () => props.onSelect(pet.id),
             className: 'dsh-pet-cfg__tab' + (pet.id === props.selId ? ' is-active' : ''),
-            children: (pet.name || pet.id) + ' (' + pet.size + 'px)',
+            children:
+              (pet.name || pet.id) +
+              ' (' +
+              pet.size +
+              'px' +
+              (pet.sizePercent === undefined || pet.sizePercent >= 100 ? '' : ' / ' + pet.sizePercent + '%') +
+              ')',
           }),
         ),
         h('button', {

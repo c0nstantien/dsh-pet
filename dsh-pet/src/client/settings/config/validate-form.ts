@@ -5,6 +5,7 @@
  * @module dsh-pet/src/client/settings/config/validate-form
  */
 import { FONT_PRESETS, FONT_SIZE_MAX, FONT_SIZE_MIN } from '../../../shared/fonts.ts';
+import { isValidSizePercent } from '../../../shared/pet-size.ts';
 import type { FontConfig, ModelSelection, Pet, PhysicsParams } from '../../../shared/types.ts';
 
 /** 校验失败时返回的文案键。 */
@@ -26,10 +27,11 @@ export interface FormValues {
 export const modelPairValid = (model: ModelSelection): boolean =>
   (model.provider.trim() === '') === (model.model.trim() === '');
 
-/** 宠物：宽度必须为正数、两个偏移必须是有限数（负数合法，宠物可以压出屏外）。 */
+/** 宠物：宽度必须为正数、百分比缺省或是不小于 1 的数字、两个偏移必须是有限数（负数合法，宠物可以压出屏外）。 */
 const petValid = (pet: Pet): boolean =>
   Number.isFinite(pet.size) &&
   pet.size > 0 &&
+  (pet.sizePercent === undefined || isValidSizePercent(pet.sizePercent)) &&
   Number.isFinite(pet.position.marginX) &&
   Number.isFinite(pet.position.marginY);
 

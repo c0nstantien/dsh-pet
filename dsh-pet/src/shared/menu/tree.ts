@@ -5,7 +5,8 @@
  * 必须始终成立：同一份输入必得同一棵树，层级顺序稳定。
  * @module dsh-pet/src/shared/menu/tree
  */
-import { type Animations, type Category } from '../types.ts';
+import { DISPLAY_HOTKEY_HINTS, DISPLAY_ORDER } from '../display-hotkey.ts';
+import { type Animations, type Category, type PetDisplay } from '../types.ts';
 import type { MenuBranch, MenuLeaf, MenuMoreItem, MenuNode } from './types.ts';
 
 /** 睡着时仍然放行的菜单动作：维护类、「叫醒它」本身，以及第三方菜单项。
@@ -17,17 +18,26 @@ const SLEEP_ALLOWED_ACTIONS: readonly string[] = ['sleep', 'wake', 'home', 'set-
 export const isSleepAllowedAction = (action: string | undefined): boolean =>
   action !== undefined && SLEEP_ALLOWED_ACTIONS.includes(action);
 
+/** 四个显示位置的菜单文案；键是 {@link DISPLAY_ORDER} 的元素，顺序以那边为准。 */
+const DISPLAY_LABELS: Readonly<Record<PetDisplay, string>> = {
+  web: '仅网页',
+  desktop: '仅桌面',
+  both: '两者',
+  none: '都不',
+};
+
 /** 「显示位置」子菜单：两端注入同一份，文案与设置页的显示位置下拉框一致。
  *  两端各写一份必然漂移，而这一项语义对称：桌面端用它把宠物送走，浏览器端用它送到桌面。
- *  「都不」是单向门（恢复入口是设置页），其余三个值都能从某一端改回来。 */
+ *  「都不」是单向门（恢复入口是设置页），其余三个值都能从某一端改回来。
+ *  右侧键帽由 `1`-`4` 数字键的同一份顺序派生，改顺序只改 {@link DISPLAY_ORDER}。 */
 export const displayMenuBranch = (): MenuBranch => ({
   label: '显示位置',
-  children: [
-    { label: '仅网页', action: 'set-display', display: 'web' },
-    { label: '仅桌面', action: 'set-display', display: 'desktop' },
-    { label: '两者', action: 'set-display', display: 'both' },
-    { label: '都不', action: 'set-display', display: 'none' },
-  ],
+  children: DISPLAY_ORDER.map((display, index): MenuLeaf => ({
+    label: DISPLAY_LABELS[display],
+    action: 'set-display',
+    display,
+    hint: DISPLAY_HOTKEY_HINTS[index],
+  })),
 });
 
 /** 第三方菜单项统一收在这个一级菜单下（宿主自己的菜单项不进这里）。 */
@@ -58,27 +68,30 @@ export function readMenuItems(data: unknown, surface: 'web' | 'desktop'): MenuMo
   return out;
 }
 
-/** 「更多」一级菜单：把第三方菜单项拼成菜单树的一枝；没有第三方项时返回 null，菜单里不会出现空的「更多」。
- *  层级只按项数决定：某 owner 只有 1 项就直接平铺（少一次点击），2 项及以上才加 owner 这一层。
- *  同名不同 owner 的项允许共存，不做去重、编号或来源标注——文案由注册方负责。 */
+/** 「更多」：第三方菜单项的固定容器；没有第三方项时返回 null，菜单里不出现空的「更多」。
+ *
+ *  层级只按 label 是否重名决定：label 在全部第三方项里唯一 → 直接平铺（`更多 / 弹弓`）；
+ *  label 重名 → 每个 owner 各占一个子菜单（`更多 / owner / label`），靠它区分同名项。
+ *  重名只可能跨 owner（同一 owner 内 label 按 Map 去重，见 host/menu 的注册表），子项仍是原
+ *  label——点击上报的 (owner, label) 与平铺时完全一致，两端点击处理不用分叉。 */
 export function buildMoreBranch(items: readonly MenuMoreItem[]): MenuBranch | null {
-  // owner → 项名（Map 保序：注册顺序 = 分组顺序 = 组内顺序）
-  const groups = new Map<string, string[]>();
-  for (const item of items) {
-    const list = groups.get(item.owner);
-    if (list) list.push(item.label);
-    else groups.set(item.owner, [item.label]);
-  }
+  const labelCount = new Map<string, number>();
+  for (const item of items) labelCount.set(item.label, (labelCount.get(item.label) ?? 0) + 1);
   const children: MenuNode[] = [];
-  for (const [owner, labels] of groups) {
-    if (labels.length === 1) {
-      children.push({ label: labels[0], action: 'third-party', owner });
-    } else {
-      children.push({
-        label: owner,
-        children: labels.map((label) => ({ label, action: 'third-party' as const, owner })),
-      });
+  // owner → 该 owner 的重名子菜单；第一次遇到它的重名项时按当时顺序插进 children（保持注册顺序）
+  const branches = new Map<string, MenuBranch>();
+  for (const item of items) {
+    if ((labelCount.get(item.label) ?? 0) === 1) {
+      children.push({ label: item.label, action: 'third-party', owner: item.owner });
+      continue;
     }
+    let branch = branches.get(item.owner);
+    if (branch === undefined) {
+      branch = { label: item.owner, children: [] };
+      branches.set(item.owner, branch);
+      children.push(branch);
+    }
+    branch.children.push({ label: item.label, action: 'third-party', owner: item.owner });
   }
   return children.length > 0 ? { label: MORE_MENU_LABEL, children } : null;
 }

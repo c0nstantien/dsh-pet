@@ -8,6 +8,13 @@ export const de: Record<Key, string> = {
   intro: 'Mehrere Pets verwalten: Jedes Pet hat eigene Größe und Position (gilt sofort nach dem Speichern).',
   // 卡片标题与卡片级说明；说明统一进问号气泡。
   petCardTitle: 'Pet-Konfiguration',
+  avatarLabel: 'Avatar',
+  avatarHint:
+    'Das kleine Bild neben den Nachrichten dieses Pets im Chatfenster. Ohne Upload erscheint das Standard-Logo des Plugins; ein Upload greift sofort und ersetzt das vorherige — „Speichern" ist nicht nötig.',
+  avatarUpload: 'Avatar hochladen',
+  avatarChange: 'Ändern',
+  avatarUploading: 'Wird hochgeladen…',
+  avatarUploaded: 'Avatar aktualisiert',
   petCardHint:
     'Einstellungen pro Pet: Name / Größe / Anzeige / Position / Offsets / die vier Funktionsschalter. Nach dem Ändern unten auf „Speichern" klicken – gilt sofort.',
   globalTitle: 'Globale Schalter',
@@ -20,6 +27,27 @@ export const de: Record<Key, string> = {
   'cmd.chat': 'Chat',
   'cmd.pet': 'Pet',
   'cmd.balance': 'Guthaben',
+  'shortcut.open': 'Pet-Chat öffnen',
+  'shortcut.chat': 'Chatfenster öffnen',
+  'shortcut.hear': 'Spracheingabe',
+  'shortcut.capture': 'Bildschirmfoto in den Chat',
+  shortcutCardTitle: 'Tastenkürzel',
+  shortcutCardHint: 'Aufgeklappt zwei Gruppen: Pet-Tastenkürzel und globale Tastenkürzel.',
+  shortcutRowChat: 'Chat öffnen',
+  shortcutRowHold: 'Zum Sprechen halten',
+  shortcutRowHear: 'Spracheingabe',
+  shortcutRowCapture: 'Bildschirmfoto',
+  shortcutRowPaste: 'Bild einfügen',
+  shortcutRowTodo: 'Aufgaben',
+  shortcutRowSleep: 'Schlafen / Aufwachen',
+  shortcutRowDisplay: 'Anzeigeposition',
+  shortcutRowSidebar: 'Seitenleisten-Chat öffnen',
+  shortcutGroupPet: 'Pet-Tastenkürzel',
+  shortcutGroupPetHint:
+    'Im Web genügt der Zeiger auf dem Pet. Im Desktop-Fenster zuerst auf das Pet klicken, damit es den Tastaturfokus bekommt.',
+  shortcutGroupGlobal: 'Globale Tastenkürzel',
+  shortcutGroupGlobalHint:
+    'Werden von DSH im Web und im Desktop-Fenster verteilt; änderbar unter Einstellungen → Allgemein → Tastenkürzel.',
   petsLabel: 'Pet-Liste',
   add: 'Pet hinzufügen',
   remove: 'Entfernen',
@@ -31,6 +59,9 @@ export const de: Record<Key, string> = {
   emptyPets: 'Noch keine Pets – auf „Pet hinzufügen" klicken, um eines zu erstellen.',
   sizeLabel: 'Größe (Breite px)',
   sizeHint: 'Höhe automatisch = Breite × 9/16.',
+  sizePercentLabel: 'Max. Bildschirmbreite (%)',
+  sizePercentHint:
+    'Wie viel der Bildschirmbreite der Pet höchstens einnimmt: 100 = nie breiter als ein Bildschirm (bei breiten Fenstern identisch mit px); 30–40 macht ihn auf dem Handy deutlich kleiner, ohne den Desktop zu verändern. Wird beim Laden einmal berechnet; nach Größenänderung neu laden.',
   nameLabel: 'Name',
   nameHint:
     'Anzeigename: erscheint beim Hovern über dem Pet und fließt in die KI-Persona ein („Dein Name ist X"). Doppelt erlaubt; leer = es gilt die Pet-ID.',
@@ -137,23 +168,39 @@ export const de: Record<Key, string> = {
   voiceTodoEnabledHint:
     'Spricht eine fällige To-do-Erinnerung (die Blase erscheint weiterhin; dieser Schalter entscheidet nur, ob gesprochen wird). Unterliegt dem Hauptschalter oben. Standardmäßig aus.',
   voiceNameLabel: 'Stimme',
+  voiceVolumeLabel: 'Lautstärke',
+  voiceVolumeHint:
+    'Wiedergabelautstärke als Dezimalzahl 0–1: 1 ist die maximale Lautstärke (100 %), 0 ist stumm. Ändert nur die Lautheit und synthetisiert kein Audio neu, kostet also nichts extra. Unabhängig vom Hauptschalter oben — bei ausgeschaltetem Schalter ohne Wirkung.',
   physicsTitle: 'Physik (Zieh- und Wurfgefühl)',
   physicsHint:
     'Globaler Standard für alle Pets (ein Pet-Pack kann ihn in seiner Art-Datei überschreiben); wird beim „Speichern" in die Benutzerkonfiguration geschrieben (kein sofortiges Schreiben). Im Browser sofort wirksam, im Desktop-Modus, sobald das Speichern die Pet-Fenster neu lädt.',
-  'physics.gravity': 'Schwerkraft (gravity)',
+  mobileTitle: 'Mobil-Effekte',
+  mobileHint:
+    'Nur im Handy-Browser sinnvoll: Vibration braucht einen Motor, die beiden Bewegungs-Schalter brauchen Neigungs-/Beschleunigungssensoren, und Sensoren gibt es nur über HTTPS oder localhost.',
+  'physics.gravity': 'Schwerkraft',
   'physics.gravityHint': 'px/s², größer = fällt schneller; 0 = schwerelos (fliegt geradeaus weiter)',
-  'physics.restitution': 'Elastizität (restitution)',
+  'physics.restitution': 'Elastizität',
   'physics.restitutionHint':
     '0–1, Geschwindigkeitsanteil beim Abprallen von Wand/Boden (1 = voll elastisch, 0 = bleibt sofort stehen)',
-  'physics.groundFriction': 'Bodenreibung (groundFriction)',
-  'physics.groundFrictionHint': '/s, Abklingen der horizontalen Geschwindigkeit am Boden; 0 = eisglatt, keine Bremse',
-  'physics.throwPower': 'Wurfkraft (throwPower)',
+  'physics.groundFriction': 'Kontaktreibung',
+  'physics.groundFrictionHint':
+    '/s, Abklingen der Geschwindigkeit entlang jeder Kontaktfläche (Wand, Boden, Decke); 0 = überall eisglatt',
+  'physics.throwPower': 'Wurfkraft',
   'physics.throwPowerHint':
     '> 0, Gesamtfaktor für Federfolge und Abwurfgeschwindigkeit (1 = Standard; höher = folgt enger, wirft härter)',
-  physicsCeilingBounce: 'Deckenabprall (ceilingBounce)',
+  physicsCeilingBounce: 'Deckenabprall',
   physicsCeilingBounceHint: 'Aus: Würfe können oben aus dem Bildschirm fliegen (die Schwerkraft holt sie zurück)',
-  physicsPetCollision: 'Pet-Kollisionen (petCollision)',
+  physicsPetCollision: 'Pet-Kollisionen',
   physicsPetCollisionHint: 'Ein fliegendes Pet prallt mit Impulserhaltung von anderen ab (Masse ∝ Größe²)',
+  physicsHaptic: 'Kollisions-Vibration',
+  physicsHapticHint:
+    'Ein Impuls pro Treffer (Wand, Boden, Decke, andere Pets). Funktioniert in Chrome/Edge; nicht auf iOS oder in WebView-Hüllen wie Via. „Nicht stören“ blockiert die Vibration.',
+  physicsTilt: 'Schwerkraft per Neigung',
+  physicsTiltHint:
+    'Handy neigen: die Schwerkraft folgt der Neigung (Betrag = der Wert oben). Bei Schwerkraft 0 bewirkt Neigen nichts. Benötigt HTTPS/localhost.',
+  physicsShake: 'Schütteln zum Werfen',
+  physicsShakeHint:
+    'Schütteln schleudert den Pet in Wurfrichtung; die Stärke folgt throwPower. Unabhängig von der Schwerkraft, funktioniert also auch bei 0. Benötigt HTTPS/localhost.',
   invalidPhysics: 'Bitte Physikwerte prüfen: Schwerkraft / Bodenreibung ≥ 0, Elastizität 0–1, Wurfkraft > 0.',
   fontTitle: 'Aussehen & Schrift',
   fontHint:
@@ -176,7 +223,7 @@ export const de: Record<Key, string> = {
   'font.simsun': 'SimSun',
   'font.comic': 'Comic Sans MS',
   'font.system': 'Systemstandard',
-  modelTitle: 'KI-Modelle & Chat-Kontext',
+  modelTitle: 'Chat & Modelle',
   modelHint:
     'Welches Modell Flüstern und Chat jeweils nutzen und wie viel Verlauf jeder Chat-Aufruf mitführt. „Aktueller Konversation folgen" = das Modell, das Ihre aktuelle Konversation verwendet (Standard). Globaler Standard: gilt für alle Pets, ein Pet-Pack kann ihn in seiner Art-Datei überschreiben. Die Optionen stammen aus derselben Quelle wie die Modellauswahl von DSH und werden vom Host live geliefert.',
   modelFollow: 'Aktueller Konversation folgen',
@@ -231,5 +278,12 @@ export const de: Record<Key, string> = {
     '2. Das Plugin selbst entfernen (im Terminal ausführen; entfernt es auch aus der Bundle-Schicht des Profils):',
   uninstallStep3:
     '3. Die obigen Orte nach Bedarf löschen: Caches sind unschädlich; „Plugin-Benutzerdaten" löschen kostet Konfiguration und Chat-Gedächtnis (vorher main-config.jsonc sichern, wenn Sie es behalten wollen).',
+  motionTitle: 'Aktionshäufigkeit',
+  motionHint:
+    'Vier Felder: Leerlauf / Drehen / Bewegen sind editierbar, die Zufallsaktion wird berechnet (100 − die anderen drei). Globaler Standard für alle Pets; ein Pet-Pack kann ihn in seiner Art-Datei überschreiben.',
+  'motion.idle': 'Leerlauf',
+  'motion.turn': 'Drehen',
+  'motion.move': 'Bewegen',
+  'motion.action': 'Zufallsaktion',
   uninstallCmd: 'dsh plugin --profile {profile} remove dsh-pet',
 };

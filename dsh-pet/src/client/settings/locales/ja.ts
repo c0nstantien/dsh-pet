@@ -8,6 +8,13 @@ export const ja: Record<Key, string> = {
   intro: '複数のペットを管理できます。ペットごとにサイズと位置を個別に設定できます（保存するとすぐに反映されます）。',
   // 卡片标题与卡片级说明；说明统一进问号气泡。
   petCardTitle: 'ペットの設定',
+  avatarLabel: 'アバター',
+  avatarHint:
+    'チャットパネルでこのペットの発言の横に表示される小さな画像です。未アップロードならプラグインの既定画像が使われます。アップロードはすぐ反映され、以前の画像を上書きします（「保存」を押す必要はありません）。',
+  avatarUpload: 'アバターをアップロード',
+  avatarChange: '変更',
+  avatarUploading: 'アップロード中…',
+  avatarUploaded: 'アバターを更新しました',
   petCardHint:
     'ペットごとに個別設定します：名前 / サイズ / 表示位置 / 位置 / オフセット / 4つの機能スイッチ。設定後、最下部の「保存」をクリックするとすぐに反映されます。',
   globalTitle: 'グローバルスイッチ',
@@ -20,6 +27,27 @@ export const ja: Record<Key, string> = {
   'cmd.chat': 'チャット',
   'cmd.pet': 'ペット',
   'cmd.balance': '残高',
+  'shortcut.open': 'ペット会話を開く',
+  'shortcut.chat': '会話ウィンドウを開く',
+  'shortcut.hear': '音声入力',
+  'shortcut.capture': 'スクリーンショットを会話へ',
+  shortcutCardTitle: 'ショートカット',
+  shortcutCardHint: '開くと 2 グループに分かれます：ペットのショートカットとグローバルショートカット。',
+  shortcutRowChat: '会話を開く',
+  shortcutRowHold: '押して話す',
+  shortcutRowHear: '音声入力',
+  shortcutRowCapture: 'スクリーンショット',
+  shortcutRowPaste: '画像を貼り付け',
+  shortcutRowTodo: 'ToDo',
+  shortcutRowSleep: '寝る / 起きる',
+  shortcutRowDisplay: '表示位置',
+  shortcutRowSidebar: 'サイドバーの会話を開く',
+  shortcutGroupPet: 'ペットのショートカット',
+  shortcutGroupPetHint:
+    'Web はポインタをペットに合わせるだけ。デスクトップペットのウィンドウは、先にペットをクリックしてキーボードフォーカスを移してください。',
+  shortcutGroupGlobal: 'グローバルショートカット',
+  shortcutGroupGlobalHint:
+    'Web とデスクトップ版のウィンドウでは DSH が振り分けます。設定 → 一般 → ショートカットで変更できます。',
   petsLabel: 'ペット一覧',
   add: 'ペットを追加',
   remove: '削除',
@@ -31,6 +59,9 @@ export const ja: Record<Key, string> = {
   emptyPets: 'ペットがありません。「ペットを追加」をクリックして作成してください。',
   sizeLabel: 'サイズ（幅 px）',
   sizeHint: '高さは自動 = 幅 × 9/16。',
+  sizePercentLabel: '画面幅の上限（%）',
+  sizePercentHint:
+    'ペットが画面幅のどれだけを占めるかの上限です。100 = 画面幅を超えない（広いウィンドウでは px と完全に同じ）；30–40 にすると PC はそのままにスマホで明確に小さくなります。読み込み時に一度だけ計算されるので、ウィンドウサイズを変えたら再読み込みしてください。',
   nameLabel: '名前',
   nameHint:
     '表示名：ペットにマウスを重ねると表示され、AI のペルソナにも追加されます（あなたの名前は X）。重複も可能です。空欄の場合はペット id が使われます。',
@@ -135,22 +166,37 @@ export const ja: Record<Key, string> = {
   voiceTodoEnabledHint:
     '期限が来た ToDo リマインダーを読み上げます（同じ文言でバブルも表示され、この項目は読み上げるかどうかだけを決めます）。上のマスタースイッチに従います。デフォルトはオフです。',
   voiceNameLabel: '声質',
+  voiceVolumeLabel: '音量',
+  voiceVolumeHint:
+    '読み上げの音量（0〜1 の小数）。1 が最大音量（100%）、0 は消音です。変わるのは再生の大きさだけで、音声の再合成は行いません。上の総スイッチとは別の設定で、総スイッチが切のときは効果がありません。',
   physicsTitle: '物理（ドラッグ＆投げの感触）',
   physicsHint:
     'グローバルデフォルトで、すべてのペットに共通です（pet pack は自身の種類ファイルで個別に上書きできます）。「保存」時にユーザー設定へ書き込まれます（即時書き込みはしません）。ブラウザでは保存後すぐに反映され、デスクトップでは保存でペットウィンドウが再読み込みされてから反映されます。',
-  'physics.gravity': '重力 (gravity)',
+  mobileTitle: 'モバイル向け効果',
+  mobileHint:
+    'スマホのブラウザでのみ意味があります。振動にはモーター、2 つの体感スイッチには傾き／加速度センサーが必要で、センサーは HTTPS または localhost でのみ使えます。',
+  'physics.gravity': '重力',
   'physics.gravityHint': 'px/s²。大きいほど速く落下します。0 = 無重力（投げると等速直線運動で飛び続けます）',
-  'physics.restitution': '弾性 (restitution)',
+  'physics.restitution': '弾性',
   'physics.restitutionHint': '0～1。壁や床に当たったときに残る速度の割合（1 = 完全弾性、0 = 当たった瞬間に停止）',
-  'physics.groundFriction': '地面摩擦 (groundFriction)',
-  'physics.groundFrictionHint': '/s。着地後の水平速度の減衰率。0 = 氷の上のように減速しない',
-  'physics.throwPower': '投げる力 (throwPower)',
+  'physics.groundFriction': '接触摩擦',
+  'physics.groundFrictionHint': '/s。壁・床・天井に当たった後の接線方向の速度の減衰率。0 = どの面も氷のよう',
+  'physics.throwPower': '投げる力',
   'physics.throwPowerHint':
     '> 0。バネの追従性と投げ出しの初速の全体倍率（1 = デフォルト。大きいほどよく追従し、勢いよく飛びます）',
-  physicsCeilingBounce: '天井での跳ね返り (ceilingBounce)',
+  physicsCeilingBounce: '天井での跳ね返り',
   physicsCeilingBounceHint: 'オフにすると、投げたペットが画面の上端を越えて飛び出せます（重力が引き戻します）',
-  physicsPetCollision: 'ペット同士の衝突 (petCollision)',
+  physicsPetCollision: 'ペット同士の衝突',
   physicsPetCollisionHint: '飛行中のペットが他のペットに当たると、運動量保存に従って弾き返されます（質量 ∝ サイズ²）',
+  physicsHaptic: '衝突時の振動',
+  physicsHapticHint:
+    '壁・床・天井・ペット同士の衝突ごとに 1 回振動します。Chrome / Edge で動作。iOS と Via のような WebView ブラウザでは無効。サイレント/集中モードは振動を止めます。',
+  physicsTilt: '傾きで重力',
+  physicsTiltHint:
+    '端末を傾けると重力がそちらへ向かいます（大きさは上の重力値）。重力が 0 のときは傾けても効果がありません。HTTPS/localhost が必要です。',
+  physicsShake: '振って投げる',
+  physicsShakeHint:
+    '振った方向へペットを飛ばします。強さは投げる力（throwPower）に比例し、重力とは無関係なので重力 0 でも使えます。HTTPS/localhost が必要です。',
   invalidPhysics: '物理パラメータを確認してください：重力 / 地面摩擦 ≥ 0、弾性 0～1、投げる力 > 0。',
   fontTitle: '外観とフォント',
   fontHint:
@@ -172,7 +218,7 @@ export const ja: Record<Key, string> = {
   'font.simsun': 'SimSun',
   'font.comic': 'Comic Sans MS',
   'font.system': 'システムデフォルト',
-  modelTitle: 'AI モデルと会話コンテキスト',
+  modelTitle: '会話とモデル',
   modelHint:
     'ひとりごととチャットがそれぞれどのモデルを使うか、またチャットが毎回何ラウンドの履歴をコンテキストに含めるか。「現在の会話に従う」= 現在の会話で使っているモデルを使用（デフォルト）。グローバルデフォルト：すべてのペットに適用され、pet pack は自身の種類ファイルで個別に上書きできます。選択肢は DSH のモデルピッカーと同じソースからホストがリアルタイムに提供します。',
   modelFollow: '現在の会話に従う',
@@ -229,5 +275,12 @@ export const ja: Record<Key, string> = {
     '2. プラグイン本体を削除します（ターミナルで実行します。profile の bundle レイヤーからも同時に削除されます）：',
   uninstallStep3:
     '3. 上記の場所を必要に応じて削除します：キャッシュは削除しても影響ありません。「プラグインのユーザーデータ」を削除すると設定と会話メモリが失われます（残したい場合は中の main-config.jsonc を先にバックアップしてください）。',
+  motionTitle: 'アクション頻度',
+  motionHint:
+    '4つの欄：待機 / 方向転換 / 移動は編集でき、ランダムアクションは自動計算（100 − 残り3つ）。グローバルデフォルトで、すべてのペットに共通です。pet pack は自身の種類ファイルで上書きできます。',
+  'motion.idle': '待機',
+  'motion.turn': '方向転換',
+  'motion.move': '移動',
+  'motion.action': 'ランダムアクション',
   uninstallCmd: 'dsh plugin --profile {profile} remove dsh-pet',
 };

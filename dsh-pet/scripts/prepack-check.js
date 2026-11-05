@@ -68,6 +68,7 @@ const required = [
   'runtime/electron-helper/main/windows.js', // 桌面模式窗口与两条实时泵（同上）
   'runtime/electron-helper/main/ipc.js', // 桌面模式 ipc 处理器（同上）
   'runtime/electron-helper/main/displays.js', // 桌面模式显示器热更新（同上）
+  'runtime/electron-helper/main/user-data.js', // 桌面模式 userData 回退决策（main.js require，缺了会启动即崩）
   'runtime/electron-helper/pointer-target.js', // 桌面模式点击穿透兜底判定（main.js require，缺了会启动即崩）
   'runtime/electron-helper/host-liveness.js', // 桌面模式宿主存活判定（main.js require，缺了会启动即崩）
   'runtime/electron-helper/topmost-watchdog.js', // 桌面模式置顶看门狗判定（main.js require，缺了会启动即崩）
@@ -83,6 +84,7 @@ const required = [
   'runtime/electron-helper/sprite/motion.js', // 桌面模式运动驱动（同上）
   'runtime/electron-helper/sprite/input.js', // 桌面模式指针与命中（同上）
   'runtime/electron-helper/sprite/init.js', // 桌面模式构建期初始化（同上）
+  'runtime/electron-helper/sprite/window-fit.js', // 桌面模式窗口落位与钳制补偿（sprite.js 的原型扩展，须在其后加载）
   'runtime/electron-helper/shared-core.js', // 桌面模式共享纯逻辑（src/shared 构建产物，window.PetShared）
   'runtime/electron-helper/index.html', // 桌面模式页面壳
 ];

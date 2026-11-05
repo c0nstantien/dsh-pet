@@ -53,7 +53,8 @@ export function createCueEffects(rt: CueEffectsRuntime) {
     const prevPosRef = useRef(0);
     const prevThrowRef = useRef(0);
 
-    /** 余额事件：按档位播事件动画并弹气泡。手动请求无条件弹，自动轮询要求开启且有百分比。 */
+    /** 余额事件：按档位播事件动画并弹气泡。手动请求无条件弹，自动轮询要求开启且有百分比；
+     *  睡着时自动来源整拍丢弃，否则会顶掉睡姿。 */
     const consumeBalance = (): void => {
       const cfg = hub.cfg();
       const card = hub.card;
@@ -61,6 +62,8 @@ export function createCueEffects(rt: CueEffectsRuntime) {
       prevBalanceRef.current = balanceTick;
       // 占用锁：自动余额不看，手动请求照常；tick 消费之后再判，占用期间这一拍就当过去。
       if (hub.ownAnim.isFrozen() && !balanceManual) return;
+      // 睡觉一票否决：睡着一律不播，手动请求也不打断睡姿（与桌面端同一口径）。
+      if (hub.sleeping()) return;
       if (!balance || !balance.ok) return;
       if (!cfg.balanceEnabled && !balanceManual) return; // 自动轮询受开关门控，手动请求无条件通过。
       const percent = balancePercent(balance);
@@ -93,8 +96,9 @@ export function createCueEffects(rt: CueEffectsRuntime) {
       if (!cfg.balanceEnabled && !balanceManual) return; // 自动轮询受开关门控，手动请求无条件通过。
       if (balanceNoticeTick === 0 || balanceNoticeTick === prevNoticeRef.current) return;
       prevNoticeRef.current = balanceNoticeTick;
-      // 占用锁：自动来源不看，手动请求照常。
-      if ((hub.ownAnim.isFrozen() || hub.sleeping()) && !balanceManual) return;
+      // 占用锁：自动来源不看，手动请求照常；睡觉一票否决，手动也不弹。
+      if (hub.ownAnim.isFrozen() && !balanceManual) return;
+      if (hub.sleeping()) return;
       if (!balance || balance.ok) return;
       hub.bubbles.showBalance();
     };
@@ -103,7 +107,6 @@ export function createCueEffects(rt: CueEffectsRuntime) {
     const consumeWorkStatus = (): void => {
       const cfg = hub.cfg();
       const card = hub.card;
-      if (!cfg.workStatusEnabled) return; // 未启用工作状态联动，该宠物完全免疫。
       if (workStatusTick === 0 || workStatusTick === prevWorkRef.current) return;
       prevWorkRef.current = workStatusTick;
       // 占用锁：工作状态是自动来源，锁生效时不响应；解冻时由冻结驱动重新对齐当前状态。

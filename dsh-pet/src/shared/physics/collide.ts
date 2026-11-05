@@ -43,11 +43,12 @@ export const rectsOverlap = (
 
 /** 飞行中的宠物撞到另一只：近乎弹性碰撞（动量守恒 + 恢复系数 0.995），质量 ∝ size²。
  *  法向 = 两包围盒中心连线，法向速度按一维动量公式重分配，切向分量各自保留（无切向摩擦）。
- *  返回 null = 中心重合定不出法向，或两者正在分离（避免重叠帧反复弹跳抖动）。 */
+ *  返回 null = 中心重合定不出法向，或两者正在分离（避免重叠帧反复弹跳抖动）。
+ *  impactSpeed 是法向相对速度，供触觉反馈换算强度。 */
 export const collidePet = (
   fly: PetCollider,
   hit: PetCollider,
-): { fvx: number; fvy: number; hvx: number; hvy: number } | null => {
+): { fvx: number; fvy: number; hvx: number; hvy: number; impactSpeed: number } | null => {
   const hf = (fly.size * 9) / 16 / 2;
   const hh = (hit.size * 9) / 16 / 2;
   const cx = hit.x + hit.size / 2 - (fly.x + fly.size / 2);
@@ -72,7 +73,36 @@ export const collidePet = (
     fvy: fly.vy - v1n * ny + v1n2 * ny,
     hvx: hit.vx - v2n * nx + v2n2 * nx,
     hvy: hit.vy - v2n * ny + v2n2 * ny,
+    impactSpeed: vrel,
   };
+};
+
+/**
+ * 两个身体框重叠时的最短推出位移：只算几何、不碰速度。
+ *
+ * 速度交换（{@link collidePet}）在两者正在分离时返回 null，光靠它会让已经插在一起的两只
+ * 直接穿过去；补这一个纯位移量才能把它们推开。
+ *
+ * @param a - 自己的身体框。
+ * @param b - 对方的身体框。
+ * @returns 推 a 离 b 的位移（各让一半）；不重叠时返回 `null`。
+ */
+export const overlapPush = (
+  a: { left: number; top: number; right: number; bottom: number },
+  b: { left: number; top: number; right: number; bottom: number },
+): { dx: number; dy: number } | null => {
+  const ox = Math.min(a.right, b.right) - Math.max(a.left, b.left);
+  const oy = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top);
+  if (ox <= 0 || oy <= 0) return null;
+  const alongX = ox <= oy;
+  const sign = alongX
+    ? (a.left + a.right) / 2 >= (b.left + b.right) / 2
+      ? 1
+      : -1
+    : (a.top + a.bottom) / 2 >= (b.top + b.bottom) / 2
+      ? 1
+      : -1;
+  return alongX ? { dx: (sign * ox) / 2, dy: 0 } : { dx: 0, dy: (sign * oy) / 2 };
 };
 
 /** 共享碰撞站场的槽位（每只宠物注册一个；浏览器半侧 PetMulti 与桌面端的碰撞 broker 共用）。 */
@@ -83,8 +113,8 @@ export interface PetCollisionSlot {
   bottomPad: number;
   /** 当前包围盒左上角（px）；null = 未挂载或无位置 */
   getBox: () => { x: number; y: number } | null;
-  /** 当前速度（px/s）；非飞行中为 0 */
+  /** 当前速度（px/s）；没在运动时为 0 */
   getVel: () => { vx: number; vy: number };
-  /** 被撞回调：用新初速从当前落点重新抛掷 */
-  onHit: (vx: number, vy: number) => void;
+  /** 写入碰撞结算后的**绝对**速度（px/s）：由宠物自己按当前模式落地——在动就改速度，没动就以此起飞。 */
+  applyVelocity: (vx: number, vy: number) => void;
 }

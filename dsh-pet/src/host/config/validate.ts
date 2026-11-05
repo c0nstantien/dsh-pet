@@ -84,7 +84,8 @@ function weightsValid(w: unknown): boolean {
 }
 
 /** physics 段校验：gravity ≥ 0（0 = 无重力，合法）、restitution ∈ [0,1]、groundFriction ≥ 0（均为有限数字）、
- *  ceilingBounce 为布尔、throwPower > 0（有限数字）、petCollision 为布尔 */
+ *  ceilingBounce / petCollision 为布尔、throwPower > 0（有限数字）。
+ *  hapticEnabled / tiltGravity / shakeThrow 为可选布尔（旧配置没有这几个键）。 */
 export function physicsValid(value: unknown): boolean {
   if (!value || typeof value !== 'object') return false;
   const p = value as Record<string, unknown>;
@@ -103,7 +104,12 @@ export function physicsValid(value: unknown): boolean {
     typeof p.ceilingBounce === 'boolean' &&
     Number.isFinite(tp) &&
     tp > 0 &&
-    typeof p.petCollision === 'boolean'
+    typeof p.petCollision === 'boolean' &&
+    // 可选：旧配置（与手写配置）没有这三个键，各按默认处理（三个都按开处理），
+    // 缺键不算整段非法。
+    (p.hapticEnabled === undefined || typeof p.hapticEnabled === 'boolean') &&
+    (p.tiltGravity === undefined || typeof p.tiltGravity === 'boolean') &&
+    (p.shakeThrow === undefined || typeof p.shakeThrow === 'boolean')
   );
 }
 
@@ -168,6 +174,9 @@ export function topFieldValid(key: string, value: unknown): boolean {
     case 'voiceName':
       // 音色必须是白名单内的 id；写错即非法，读取侧回落到默认音色并告警
       return typeof value === 'string' && isKnownVoice(value);
+    case 'voiceVolume':
+      // 播放音量系数：0–1 的有限数，与 Audio.volume 同量纲；越界即非法（不夹取，读取侧回落默认）
+      return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
     case 'voiceWhisperEnabled':
       // 周期碎碎念的语音开关（全局布尔）：只决定念不念，不影响气泡与记忆
       return typeof value === 'boolean';

@@ -21,8 +21,9 @@ export {
   RELEASE_STALE_MS,
   RELEASE_WINDOW_MS,
   RESTITUTION,
-  REST_VX,
-  REST_VY,
+  REST_NORMAL,
+  REST_NORMAL_EPS,
+  REST_TANGENT,
   SEG_MIN_DT_MS,
   SLINGSHOT_REF_RATIO,
   SPRING_C,
@@ -47,7 +48,8 @@ export {
   throwStepRegion,
   throwSubsteps,
 } from './physics/throw.ts';
-export type { DragSample, ThrowBounds, ThrowSpace, ThrowState } from './physics/throw.ts';
+export type { DragSample, GravityVector, ThrowBounds, ThrowSpace, ThrowState } from './physics/throw.ts';
+export type { ContactEdge } from './physics/contact.ts';
 export {
   estimateReleaseVelocity,
   pullAngle,
@@ -58,5 +60,5 @@ export {
   trimTrail,
 } from './physics/release.ts';
 export { softClampSpeed, springStep } from './physics/spring.ts';
-export { bodyPixelBox, collidePet, rectsOverlap } from './physics/collide.ts';
+export { bodyPixelBox, collidePet, overlapPush, rectsOverlap } from './physics/collide.ts';
 export type { PetCollider, PetCollisionSlot } from './physics/collide.ts';

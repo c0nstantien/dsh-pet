@@ -86,6 +86,10 @@ export interface Pet {
    *  缺失或留空按该宠物 id 处理并告警。 */
   name: string;
   size: number;
+  /** 人物占屏宽上限（%，默认 20，不设上限）：按本体占屏换算出画框宽，`size` 仍是画框上限。
+   *  100 ≈ 不限制（宽窗口下与按 px 显示一致）；填 150 人物会宽于屏幕，但画框仍被 `size` 夹住。
+   *  小于 1 或非数字回落到 20。只作用于浏览器半侧——桌面透明窗始终用 `size`。 */
+  sizePercent?: number;
   /** 是否启用余额功能：true = 触发余额动画并显示余额气泡，false = 该宠物完全禁用余额。缺失即配置错误 */
   balanceEnabled: boolean;
   /** 是否启用碎碎念：true = 按 eventsRefreshSec.whisper 周期生成一句话并播碎碎念动画，false = 禁用。
@@ -159,14 +163,25 @@ export interface PhysicsParams {
   gravity: number;
   /** 碰壁反弹恢复系数 0~1（1 = 完全弹性，0 = 撞上即停；墙与地共用） */
   restitution: number;
-  /** 地面水平摩擦（/s）：落地时水平速度的衰减率，0 = 无摩擦 */
+  /** 接触面切向摩擦（/s）：撞墙、落地、撞顶后沿接触面方向的速度衰减率，0 = 四面都像冰面 */
   groundFriction: number;
   /** 顶部是否反弹：false = 顶部无边界，抛掷可飞出屏幕顶部（重力仍会拉回落） */
   ceilingBounce: boolean;
   /** 总力度（拖拽与抛掷的输出增益）：弹簧 K/C、甩抛初速与软上限整体 ×p（1.0 = 现状，必须 > 0） */
   throwPower: number;
-  /** 多宠物互相碰撞开关：true = 飞行中的宠物撞到其它宠物时按动量守恒弹开；false = 互相穿过（默认） */
+  /** 多宠物互相碰撞开关：true（默认）= 飞行中的宠物撞到其它宠物时按动量守恒弹开；false = 互相穿过 */
   petCollision: boolean;
+  /** 倾斜控制重力：true（默认）= 手机倾斜方向代替固定向下的重力方向（大小仍由 gravity 决定，竖直时取满值；
+   *  gravity 为 0 时倾斜没有可用的量，等同关闭）；false = 重力恒竖直向下。
+   *  仅浏览器半侧生效，且传感器只在安全上下文（HTTPS / localhost）可用；缺键按 true。 */
+  tiltGravity?: boolean;
+  /** 摇一摇抛出：true（默认）= 摇一摇沿甩动方向把宠物甩出去（力度 = 基准 × throwPower），与重力大小无关，
+   *  所以 gravity 为 0 时也能用；false = 不读加速度计。同样只在安全上下文可用。缺键按 true。 */
+  shakeThrow?: boolean;
+  /** 碰撞触觉反馈：true（默认）时撞墙 / 落地 / 撞顶与宠物互撞各震一下。
+   *  仅浏览器半侧生效，且要求环境有 Vibration API——iOS 与桌面端没有，静默跳过。
+   *  缺省按 true；旧配置里没有这个键也算开。 */
+  hapticEnabled?: boolean;
 }
 
 /** 字体种类预设 id（font.family 白名单；清单与对应字体栈见 shared/fonts.ts）。 */

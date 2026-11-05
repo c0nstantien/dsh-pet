@@ -5,7 +5,7 @@
  * @module dsh-pet/src/client/settings/config/http
  */
 import { ROUTE_PATH } from '../../../shared/constants.ts';
-import type { FontConfig, ModelSelection, Pet, PhysicsParams } from '../../../shared/types.ts';
+import type { FontConfig, ModelSelection, Pet, PhysicsParams, Weights } from '../../../shared/types.ts';
 import type { ModelCatalogGroup } from '../picker/index.ts';
 import type { MergedConfig } from './read.ts';
 
@@ -41,6 +41,8 @@ export interface SaveFields {
   voiceEnabled: boolean;
   /** 语音音色 id（白名单内的四个之一）。 */
   voiceName: string;
+  /** 播放音量系数：0–1 的小数，1 = 最大音量，0 = 静音。 */
+  voiceVolume: number;
   /** 周期碎碎念要不要念出来。 */
   voiceWhisperEnabled: boolean;
   /** 待办提醒要不要念出来。 */
@@ -51,6 +53,8 @@ export interface SaveFields {
   chatMemoryRounds: number;
   chatImageLimit: number;
   font: FontConfig;
+  /** 动作频率权重（main 条目）：三项合计 ≤ 100，随机动作是余量。 */
+  animationWeights: Weights;
 }
 
 /** 保存结果：调用方按 `kind` 分支，不再猜 HTTP 细节。 */
@@ -78,6 +82,7 @@ export function buildSaveBody(fields: SaveFields): Record<string, unknown> {
     trayEnabled: fields.trayEnabled,
     voiceEnabled: fields.voiceEnabled,
     voiceName: fields.voiceName,
+    voiceVolume: fields.voiceVolume,
     voiceWhisperEnabled: fields.voiceWhisperEnabled,
     voiceTodoEnabled: fields.voiceTodoEnabled,
     physics: fields.physics,
@@ -86,6 +91,7 @@ export function buildSaveBody(fields: SaveFields): Record<string, unknown> {
     chatMemoryRounds: fields.chatMemoryRounds,
     chatImageLimit: fields.chatImageLimit,
     font: fields.font,
+    animationWeights: fields.animationWeights,
   };
 }
 

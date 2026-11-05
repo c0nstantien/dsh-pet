@@ -6,7 +6,8 @@
  */
 import { DEFAULT_FONT } from '../../../shared/fonts.ts';
 import { DEFAULT_PHYSICS } from '../../../shared/physics.ts';
-import type { FontConfig, ModelSelection, Pet, PhysicsParams } from '../../../shared/types.ts';
+import type { FontConfig, ModelSelection, Pet, PhysicsParams, Weights } from '../../../shared/types.ts';
+import { parseWeights } from '../../../shared/weights.ts';
 
 /** 宿主返回的成品聚合：`main` 是大配置条目，其余键是文件定义的其他宠物条目。 */
 export type MergedConfig = Record<string, Record<string, unknown>>;
@@ -29,6 +30,8 @@ export interface MainConfigPatch {
   voiceEnabled?: boolean;
   /** 语音音色 id（宿主已按白名单校验，客户端原样展示）。 */
   voiceName?: string;
+  /** 播放音量系数（0–1）；缺省表示这次响应里没有可信值。 */
+  voiceVolume?: number;
   /** 周期碎碎念的语音开关；缺省表示这次响应里没有可信值。 */
   voiceWhisperEnabled?: boolean;
   /** 待办提醒的语音开关；缺省表示这次响应里没有可信值。 */
@@ -37,6 +40,8 @@ export interface MainConfigPatch {
   physics?: PhysicsParams;
   /** 字体：同物理参数。 */
   font?: FontConfig;
+  /** 动作频率权重（main 条目）：缺省表示这次响应里没有可信值。 */
+  animationWeights?: Weights;
   whisperModel?: ModelSelection;
   chatModel?: ModelSelection;
   chatMemoryRounds?: number;
@@ -88,6 +93,8 @@ export function readMainConfig(merged: MergedConfig): MainConfigPatch | null {
   if (main.font && typeof main.font === 'object') {
     patch.font = { ...DEFAULT_FONT, ...(main.font as FontConfig) };
   }
+  const weights = parseWeights(main.animationWeights);
+  if (weights) patch.animationWeights = weights;
   const whisperModel = readModel(main.whisperModel);
   if (whisperModel) patch.whisperModel = whisperModel;
   const chatModel = readModel(main.chatModel);
@@ -96,6 +103,9 @@ export function readMainConfig(merged: MergedConfig): MainConfigPatch | null {
   if (rounds !== undefined) patch.chatMemoryRounds = rounds;
   const limit = nonNegative(main.chatImageLimit);
   if (limit !== undefined) patch.chatImageLimit = limit;
+  // 上界在宿主侧已经把关，这里补一次跨进程读回的判定：脏值只影响显示，不让它流到播放端
+  const volume = nonNegative(main.voiceVolume);
+  if (volume !== undefined && volume <= 1) patch.voiceVolume = volume;
   return patch;
 }
 

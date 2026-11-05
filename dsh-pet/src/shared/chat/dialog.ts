@@ -7,6 +7,7 @@
  */
 import { ROUTE_PATH } from '../constants.ts';
 import { createChatDom } from './dom.ts';
+import { createCompositionWatch, decideEnter } from './enter.ts';
 import type { EncodedImage } from './encode.ts';
 import { sendChat, type ChatAttachment } from './send.ts';
 import { injectChatCss } from './styles.ts';
@@ -17,6 +18,18 @@ export interface ChatDialogMount {
   el: HTMLElement;
   /** 关闭并清理（幂等） */
   close: () => void;
+  /** 开录：快捷键「按住说话」按下时用（麦克风已在录、环境不支持时无动作）。 */
+  startHear: () => void;
+  /** 收尾：快捷键松开时用（没在录时无动作）。 */
+  stopHear: () => void;
+  /** 此刻是否真的在采集。 */
+  isHearing: () => boolean;
+  /** 放进一张已编码的图（截图快捷键在弹窗已开时走这条）；返回是否收下。 */
+  setEncoded: (encoded: EncodedImage) => boolean;
+  /** 放进一张图片文件（粘贴、拖拽在弹窗已开时走这条）；类型不接受或编码失败时返回 false。 */
+  setImageFile: (file: File) => Promise<boolean>;
+  /** 在弹窗里显示一条临时提示（截图失败这类原因，超时自动收起）。 */
+  flash: (text: string) => void;
 }
 
 /** 发送接线需要的元素与回调。 */
@@ -84,12 +97,26 @@ function bindSend(binding: SendBinding): void {
         if (!binding.isClosed()) binding.input.focus();
       });
   };
+  // 回车要让开输入法：组合中的回车是上屏键，长按重复的回车只该被吞掉、不该插换行
+  const ime = createCompositionWatch();
+  binding.input.addEventListener('compositionstart', ime.start);
+  binding.input.addEventListener('compositionend', () => ime.end(performance.now()));
   binding.input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      doSend();
-    }
+    const action = decideEnter(e, ime, performance.now());
+    if (action === 'ignore') return;
+    e.preventDefault();
+    if (action === 'send') doSend();
   });
+}
+
+/**
+ * 由对话地址推导识别地址：两端传进来的都是 `.../chat`，去掉尾段换成 `/voice/hear`。
+ *
+ * @param baseUrl - 已含挂载前缀的对话地址。
+ * @returns 同前缀下的识别地址。
+ */
+function hearUrlOf(baseUrl: string): string {
+  return baseUrl.replace(/\/chat$/, '') + '/voice/hear';
 }
 
 /** 挂载对话弹窗的入参。 */
@@ -108,8 +135,15 @@ export interface ChatDialogOptions {
   clamp?: { x: number; y: number; w: number; h: number };
   /** 打开时就带着的图片（拖拽落到宠物身上走的这条）；缺省 = 空弹窗。 */
   initialImage?: File;
+  /** 打开时就带着的已编码图片（截图快捷键走的这条：截屏没有 File，只有 base64）。 */
+  initialEncoded?: EncodedImage;
   /** 截屏实现：浏览器传 getDisplayMedia 抓帧，桌面传 preload 的 IPC 调用；缺省 = 不支持。 */
   capture?: () => Promise<EncodedImage>;
+  /**
+   * 识别地址；缺省按 `baseUrl` 去掉尾部 `/chat` 推导（两端传进来的都是 `.../chat`）。
+   * 给了也用不上时（环境不能录音）按钮不出现，见 createChatDom。
+   */
+  hearUrl?: string;
 }
 
 /** 挂载一个对话输入弹窗（两端共用；位置为视口坐标，超出 clamp 矩形自动夹回）。
@@ -127,7 +161,7 @@ export function mountChatDialog(opts: ChatDialogOptions): ChatDialogMount {
       ? clamp
       : { x: 0, y: 0, w: window.innerWidth, h: window.innerHeight };
 
-  const dom = createChatDom({ capture: opts.capture });
+  const dom = createChatDom({ capture: opts.capture, hearUrl: opts.hearUrl ?? hearUrlOf(baseUrl) });
   const { root, input, err } = dom;
 
   /** 以 (x,y) 落点，超出 clamp 矩形夹回。 */
@@ -167,6 +201,16 @@ export function mountChatDialog(opts: ChatDialogOptions): ChatDialogMount {
   dom.resizeInput(); // append 后再量一次（此时样式已生效）
   place();
   if (opts.initialImage) void dom.setImageFile(opts.initialImage);
+  if (opts.initialEncoded) dom.setEncoded(opts.initialEncoded);
   input.focus();
-  return { el: root, close };
+  return {
+    el: root,
+    close,
+    startHear: dom.startHear,
+    stopHear: dom.stopHear,
+    isHearing: dom.isHearing,
+    setEncoded: dom.setEncoded,
+    setImageFile: dom.setImageFile,
+    flash: dom.flash,
+  };
 }

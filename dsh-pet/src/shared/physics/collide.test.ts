@@ -10,7 +10,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { bodyPixelBox, collidePet, rectsOverlap, type PetCollider } from './collide.ts';
+import { bodyPixelBox, collidePet, overlapPush, rectsOverlap, type PetCollider } from './collide.ts';
 import { PET_BOUNCE_E } from './constants.ts';
 import { HIT_BOX } from '../constants.ts';
 
@@ -35,6 +35,24 @@ describe('bodyPixelBox —— 命中框比例换算到像素', () => {
     assert.equal(a.right, b.right);
     assert.equal(b.top - a.top, 40);
     assert.equal(b.bottom - a.bottom, 40);
+  });
+});
+
+describe('overlapPush —— 重叠时的几何推出', () => {
+  const r = (left: number, top: number, right: number, bottom: number) => ({ left, top, right, bottom });
+
+  test('不重叠 / 恰好贴边 → null', () => {
+    assert.equal(overlapPush(r(0, 0, 10, 10), r(20, 0, 30, 10)), null);
+    assert.equal(overlapPush(r(0, 0, 10, 10), r(10, 0, 20, 10)), null);
+  });
+
+  test('横向重叠更浅时沿水平推开，各让一半', () => {
+    // 横向重叠 4，纵向重叠 8 → 沿 x 推 2
+    assert.deepEqual(overlapPush(r(0, 0, 10, 10), r(6, 2, 16, 12)), { dx: -2, dy: 0 });
+  });
+
+  test('纵向重叠更浅时沿垂直推开', () => {
+    assert.deepEqual(overlapPush(r(0, 0, 10, 10), r(2, 8, 12, 18)), { dx: 0, dy: -1 });
   });
 });
 
@@ -101,6 +119,12 @@ describe('collidePet —— 一次弹性分离', () => {
     assert.ok(out);
     assert.ok(Math.abs(out.fvy - 37) < 1e-9, `飞宠切向应保持 37，实际 ${out.fvy}`);
     assert.ok(Math.abs(out.hvy - -11) < 1e-9, `被撞宠切向应保持 -11，实际 ${out.hvy}`);
+  });
+
+  test('impactSpeed 就是法向接近速度（触觉强度按它换算）', () => {
+    const out = collidePet(pet(0, 0, 120, 0), pet(500, 0, 20, 0));
+    assert.ok(out);
+    assert.ok(Math.abs(out.impactSpeed - 100) < 1e-9, `应为 120-20=100，实际 ${out.impactSpeed}`);
   });
 
   test('恢复系数小于 1：相对法向速度的绝对值被按 e 缩小', () => {

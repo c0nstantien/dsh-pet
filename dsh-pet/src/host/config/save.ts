@@ -9,6 +9,7 @@ import { defaultLog } from '../log-file.ts';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { CORNER_SET, isValidPetId, PET_DISPLAY_SET } from './constants.ts';
+import { isValidSizePercent } from '../../shared/pet-size.ts';
 import type { ConfigPaths } from './constants.ts';
 import { fontValid, modelSelectionValid, physicsValid, topFieldValid } from './validate.ts';
 
@@ -37,6 +38,10 @@ export function saveUserConfig(
     seenIds.add(id);
     const size = Number(pp.size);
     if (!Number.isFinite(size) || size <= 0) return null;
+    // 百分比大小（可选）：与读取侧同一份判定。传了就必须是不小于 1 的数字（不设上限），否则整包 400；
+    // 缺省表示不用百分比——这里不回填默认值，否则清空会变成「显式写回一个百分比」。
+    const sizePercent = pp.sizePercent;
+    if (sizePercent !== undefined && sizePercent !== null && !isValidSizePercent(sizePercent)) return null;
     // 显示名：可重复不校验唯一；缺失/留空/非字符串 → 按该宠物 id 处理（兼容旧配置）并告警
     let name = typeof pp.name === 'string' ? pp.name.trim() : '';
     if (!name) {
@@ -80,6 +85,7 @@ export function saveUserConfig(
       position: { corner, marginX, marginY },
     };
     if (persona) pet.whisperPrompt = persona;
+    if (sizePercent !== undefined && sizePercent !== null) pet.sizePercent = sizePercent;
     out.push(pet);
   }
   const ne = o.notificationsEnabled;
@@ -102,6 +108,9 @@ export function saveUserConfig(
   if (ve !== undefined && typeof ve !== 'boolean') return null;
   const vn = o.voiceName;
   if (vn !== undefined && !topFieldValid('voiceName', vn)) return null;
+  // 播放音量（全局系数，0–1）：与上面同一套语义——传了必须合法，没传走透传保留。
+  const vv = o.voiceVolume;
+  if (vv !== undefined && !topFieldValid('voiceVolume', vv)) return null;
   // 语音播报的两个细分开关（周期碎碎念 / 待办提醒）：与上面两个布尔同语义——传了必须是布尔，
   // 没传走透传保留；校验直接复用读取侧的 topFieldValid，读写同一份规则。
   const vwe = o.voiceWhisperEnabled;
@@ -116,6 +125,11 @@ export function saveUserConfig(
   // 传了就按白名单写入；没传则走下面的透传保留（用户手改的值原样不动）。
   const ph = o.physics;
   if (ph !== undefined && !physicsValid(ph)) return null;
+  // animationWeights（动作频率；设置页「动作频率」卡写的就是它）：与 physics 同一套语义——
+  // 传了就整段校验后进白名单，没传则走下面的透传保留。校验复用读取侧的 topFieldValid
+  // （三个权重都是非负有限数），落盘只留 idle / turn / move 三个数字。
+  const aw = o.animationWeights;
+  if (aw !== undefined && !topFieldValid('animationWeights', aw)) return null;
   // font（字体种类 / 字号 / 是否随宠物缩放；设置页「外观与字体」区写的就是它）：与 physics
   // 同一套语义——传了就整段校验后进白名单，没传则走下面的透传保留。
   // 校验直接复用读取侧的 fontValid（family 白名单 / size 4~200 / followPet 布尔），读写同一份规则。
@@ -141,6 +155,11 @@ export function saveUserConfig(
     provider: String(v.provider).trim(),
     model: String(v.model).trim(),
   });
+  const cleanWeights = (v: Record<string, unknown>): { idle: number; turn: number; move: number } => ({
+    idle: Number(v.idle),
+    turn: Number(v.turn),
+    move: Number(v.move),
+  });
   // 白名单可编辑字段：pets 来自请求体，其余（四个全局开关 / physics / 两个模型 /
   // 对话历史条数）同样只在请求体真的传了时才写（未传则走下面的透传保留，不凭空造值）
   const outConfig: { pets: unknown[]; [key: string]: unknown } = { pets: out };
@@ -152,10 +171,12 @@ export function saveUserConfig(
   if (cts !== undefined) outConfig.confineToScreen = cts;
   if (ve !== undefined) outConfig.voiceEnabled = ve;
   if (vn !== undefined) outConfig.voiceName = vn;
+  if (vv !== undefined) outConfig.voiceVolume = vv;
   if (vwe !== undefined) outConfig.voiceWhisperEnabled = vwe;
   if (vte !== undefined) outConfig.voiceTodoEnabled = vte;
   if (te !== undefined) outConfig.trayEnabled = te;
   if (ph !== undefined) outConfig.physics = ph;
+  if (aw !== undefined) outConfig.animationWeights = cleanWeights(aw as Record<string, unknown>);
   if (fo !== undefined) outConfig.font = fo;
   if (wm !== undefined) outConfig.whisperModel = cleanModel(wm as Record<string, unknown>);
   if (cm !== undefined) outConfig.chatModel = cleanModel(cm as Record<string, unknown>);
@@ -175,10 +196,12 @@ export function saveUserConfig(
   if (cts !== undefined) bodyOwned.add('confineToScreen');
   if (ve !== undefined) bodyOwned.add('voiceEnabled');
   if (vn !== undefined) bodyOwned.add('voiceName');
+  if (vv !== undefined) bodyOwned.add('voiceVolume');
   if (vwe !== undefined) bodyOwned.add('voiceWhisperEnabled');
   if (vte !== undefined) bodyOwned.add('voiceTodoEnabled');
   if (te !== undefined) bodyOwned.add('trayEnabled');
   if (ph !== undefined) bodyOwned.add('physics');
+  if (aw !== undefined) bodyOwned.add('animationWeights');
   if (fo !== undefined) bodyOwned.add('font');
   if (wm !== undefined) bodyOwned.add('whisperModel');
   if (cm !== undefined) bodyOwned.add('chatModel');

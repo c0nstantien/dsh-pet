@@ -2,7 +2,8 @@
  * 指针拖拽：按下态、拖拽阈值、触屏长按菜单与点击互动。
  * 不负责飞行与走位；弹簧跟随在 ./drag-follow，松手结算在 ./drag-release。
  * 依赖 PetCard 每帧给出的当帧能力 getter：尺寸、动画池、状态设置器与停/起运动。
- * 不变量：按下后所有位置写入都经包围盒读写；松手必须先停弹簧跟随再结算落点。
+ * 不变量：按下后所有位置写入都经包围盒读写；舞台脚垫位移恒定；松手必须先停弹簧跟随再结算落点。
+ * 鼠标松开兜底也在这里：指针捕获被浏览器提前丢掉时，window 上的 mouseup 走同一套收尾。
  * @module dsh-pet/src/client/pet/motion/drag
  */
 import { trimTrail, type DragSample } from '../../../shared/physics.ts';
@@ -38,6 +39,16 @@ interface PressState {
   anchorY: number;
 }
 
+/** 一次松手的现场：React 事件在入口处折算成它，收尾逻辑只认这里。 */
+interface ReleasePoint {
+  /** 指针横坐标（px）。 */
+  x: number;
+  /** 指针纵坐标（px）。 */
+  y: number;
+  /** 命中区节点：摘拖拽类与判定提示落点都用它。 */
+  hit: HTMLDivElement;
+}
+
 /** 拖拽驱动每次处理事件时取的当帧能力。 */
 export interface DragCard {
   /** 本宠物 id，用于日志。 */
@@ -48,8 +59,6 @@ export interface DragCard {
   halfW: number;
   /** 盒半高（px）。 */
   halfH: number;
-  /** 舞台脚底垫高（px）。 */
-  bottomPad: number;
   /** 该宠物的物理参数。 */
   physics: PhysicsParams;
   /** 拖拽动画池。 */
@@ -68,8 +77,6 @@ export interface DragCard {
   bumpSeq: () => void;
   /** 标记「等新首帧就位后压 Q 弹」。 */
   markSquash: () => void;
-  /** 拖拽态：控制舞台位移与指针样式。 */
-  setDragging: (on: boolean) => void;
   /** 恢复非终态工作循环；返回 false 表示没有可恢复的状态。 */
   resumeWork: () => boolean;
   /** 停走位与位置跟随。 */
@@ -92,8 +99,6 @@ export interface DragCard {
   placeTip: (x: number, y: number) => void;
   /** 切换提示显隐。 */
   setTipOn: (on: boolean) => void;
-  /** 舞台元素。 */
-  stage: () => HTMLDivElement | null;
   /** 根元素。 */
   root: () => HTMLDivElement | null;
   /** 当前包围盒位置。 */
@@ -116,6 +121,8 @@ export interface Drag {
   onClick(): void;
   /** 停弹簧跟随，不碰指针捕获状态。 */
   stopFollow(): void;
+  /** 摘掉鼠标松开兜底监听；卸载时调用，之后这个驱动不可再用。 */
+  dispose(): void;
   /** 指针是否按着（含未超过拖动阈值）。 */
   isActive(): boolean;
   /** 是否刚拖完：松手后的短窗口内为真，右键菜单要忽略这段时间。 */
@@ -189,6 +196,25 @@ export function createDrag(card: () => DragCard): Drag {
   /** 指针轨迹采样，供初速估算。 */
   let trail: DragSample[] = [];
   const follow = createDragFollow({ card });
+  // 指针捕获可能先于鼠标松开被浏览器丢掉，那时真正的 pointerup 落在别的元素上，拖拽会卡在按下态。
+  // 只在鼠标按下期间挂一个 window 级 mouseup 兜底，按当前坐标走同一套收尾，不伪造 pointerup 事件。
+  let mousePressHit: HTMLDivElement | null = null;
+  /** 捕获丢失后的松手：坐标来自 mouseup，落点判定与正常松开完全一致。 */
+  function onWindowMouseUp(e: MouseEvent): void {
+    const hit = mousePressHit;
+    // 右键或还有别的键按着时不算松手，只认左键完全松开的那一次。
+    if (!hit || e.button !== 0 || e.buttons !== 0) return;
+    endPress(card(), { x: e.clientX, y: e.clientY, hit });
+  }
+  /** 鼠标按下时登记命中区并挂兜底；node 里的测试没有 window，替身自己提供。 */
+  const armMouseFallback = (hit: HTMLDivElement): void => {
+    mousePressHit = hit;
+    if (typeof window !== 'undefined') window.addEventListener('mouseup', onWindowMouseUp, true);
+  };
+  const clearMouseFallback = (): void => {
+    mousePressHit = null;
+    if (typeof window !== 'undefined') window.removeEventListener('mouseup', onWindowMouseUp, true);
+  };
   /** 触屏长按：计时与容差在 motion/touch-press.ts，到点后把这次按压当右键。 */
   const touchPress = createTouchPress({
     onMenu: (target) => {
@@ -266,6 +292,9 @@ export function createDrag(card: () => DragCard): Drag {
     c.stopAutonomy();
     trail = [];
     press = beginPress(c, e);
+    clearMouseFallback();
+    // 笔与触屏的 pointerup 会正常送达命中区；只有鼠标需要这条兜底。
+    if (e.pointerType === 'mouse') armMouseFallback(e.currentTarget);
     touchPress.arm({
       el: e.currentTarget,
       pointerId: e.pointerId,
@@ -287,7 +316,6 @@ export function createDrag(card: () => DragCard): Drag {
     if (!press.dragging) {
       if (Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
       press.dragging = true;
-      c.setDragging(true);
       c.setOnce(true);
       if (c.dragAnims.length) {
         const name = pick(c.dragAnims);
@@ -302,20 +330,18 @@ export function createDrag(card: () => DragCard): Drag {
     follow.aim({ x: e.clientX - press.offX - c.halfW, y: e.clientY - press.offY - c.halfH });
     const rootEl = c.root();
     if (rootEl) follow.start(rootEl);
-    const stageEl = c.stage();
-    if (stageEl) stageEl.style.transform = 'none';
   };
 
   /**
    * 松手结算：原地放下、甩抛或弹弓。
    *
    * @param c - 当帧能力。
-   * @param e - 松开事件；指针没跟上时用它兜底算落点。
+   * @param point - 松手现场；指针没跟上时用它的坐标兜底算落点。
    */
-  const settleRelease = (c: DragCard, e: ReactNS.PointerEvent<HTMLDivElement>): void => {
+  const settleRelease = (c: DragCard, point: ReleasePoint): void => {
     // 释放位置取弹簧跟随的实时包围盒，而不是指针目标。
     const current = c.box();
-    const box = current ?? { x: e.clientX - press.offX - c.halfW, y: e.clientY - press.offY - c.halfH };
+    const box = current ?? { x: point.x - press.offX - c.halfW, y: point.y - press.offY - c.halfH };
     const decision = decideRelease({
       anchor: { x: press.anchorX, y: press.anchorY },
       box,
@@ -357,43 +383,47 @@ export function createDrag(card: () => DragCard): Drag {
    * 松手后把提示摆回光标处并点亮；指针已移出命中区时保持收起。
    *
    * @param c - 当帧能力。
-   * @param e - 松开事件。
+   * @param point - 松手现场。
    */
-  const restoreTip = (c: DragCard, e: ReactNS.PointerEvent<HTMLDivElement>): void => {
-    const hitRect = e.currentTarget.getBoundingClientRect();
+  const restoreTip = (c: DragCard, point: ReleasePoint): void => {
+    const hitRect = point.hit.getBoundingClientRect();
     const inside =
-      e.clientX >= hitRect.left &&
-      e.clientX <= hitRect.right &&
-      e.clientY >= hitRect.top &&
-      e.clientY <= hitRect.bottom;
+      point.x >= hitRect.left && point.x <= hitRect.right && point.y >= hitRect.top && point.y <= hitRect.bottom;
     if (!inside) return;
-    c.placeTip(e.clientX, e.clientY);
+    c.placeTip(point.x, point.y);
     c.setTipOn(true);
   };
 
-  const onPointerUp = (e: ReactNS.PointerEvent<HTMLDivElement>): void => {
-    const c = card();
-    // pointercancel 也走这个处理器，长按计时器在这里一并清掉。
+  /**
+   * 松手收尾的唯一路径：复位按下态、摘拖拽类、结算去向并把提示摆回去。
+   *
+   * @param c - 当帧能力。
+   * @param point - 松手现场；正常 pointerup 与捕获丢失后的 window mouseup 都折算成它。
+   */
+  const endPress = (c: DragCard, point: ReleasePoint): void => {
+    clearMouseFallback();
+    // pointercancel 也走这条路径，长按计时器在这里一并清掉。
     touchPress.cancel();
     const wasDragging = press.dragging;
     press.active = false;
     press.dragging = false;
-    e.currentTarget.classList.remove('dragging');
+    point.hit.classList.remove('dragging');
     follow.stop();
     if (wasDragging) {
       justDraggedUntil = performance.now() + JUST_DRAGGED_MS;
-      c.setDragging(false);
-      const stageEl = c.stage();
-      if (stageEl) stageEl.style.transform = 'translateY(' + c.bottomPad + 'px)';
       // 拖拽松手：非终态恢复工作循环，否则播一遍待机后回随机链。
       // once 必须为 true，否则 ended 不触发，随机链回不来。
       if (!c.resumeWork()) {
         if (c.idleAnims.length) c.playAnim(pick(c.idleAnims, c.currentAnim));
         c.setOnce(true);
       }
-      settleRelease(c, e);
+      settleRelease(c, point);
     }
-    restoreTip(c, e);
+    restoreTip(c, point);
+  };
+
+  const onPointerUp = (e: ReactNS.PointerEvent<HTMLDivElement>): void => {
+    endPress(card(), { x: e.clientX, y: e.clientY, hit: e.currentTarget });
   };
 
   const onClick = (): void => {
@@ -429,5 +459,6 @@ export function createDrag(card: () => DragCard): Drag {
     onPointerMove,
     onPointerUp,
     stopFollow: follow.stop,
+    dispose: clearMouseFallback,
   };
 }
